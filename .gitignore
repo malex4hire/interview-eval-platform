@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.db
+.env
+.pytest_cache/
+seed.log
+storage/audio/*
+!storage/audio/.gitkeep
