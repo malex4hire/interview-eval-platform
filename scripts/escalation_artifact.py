@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -493,6 +494,10 @@ def main() -> int:
 
     svg_path = args.output_dir / "escalation.svg"
     svg_path.write_text(render_svg(run), encoding="utf-8")
+
+    # The throwaway database has served its purpose; leaving one behind on
+    # every regeneration is litter.
+    shutil.rmtree(_RECORDING_DIR, ignore_errors=True)
 
     print(f"recorded {recording_path.name} and rendered {svg_path.name}")
     print(

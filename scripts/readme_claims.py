@@ -78,7 +78,13 @@ def parse_claims(readme: Path = README) -> list[Claim]:
             continue
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         if len(cells) != 4:
-            continue
+            # Skipping here would be a fail-open: a claim whose text contains a
+            # stray pipe would drop out of the register silently, and every
+            # check downstream would pass because it no longer knew about it.
+            raise ClaimsRegisterError(
+                f"claims row does not have 4 cells (found {len(cells)}): {line!r}. "
+                "A '|' inside a cell splits the row; escape it as '\\|'."
+            )
         identifier, text, implemented_in, proven_by = cells
         # Header row and the alignment row underneath it.
         if identifier.lower() in {"#", "id", ""} or set(identifier) <= set("-: "):

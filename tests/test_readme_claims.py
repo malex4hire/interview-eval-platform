@@ -221,6 +221,31 @@ def test_the_register_is_not_empty():
     )
 
 
+def test_a_malformed_row_raises_instead_of_vanishing(tmp_path):
+    """A claim row that does not split into four cells must be loud.
+
+    This is the fail-open the parser had: a '|' inside a claim's text splits
+    the row into five cells, the row was skipped, and the claim quietly left
+    the register while every downstream check went on passing — because none
+    of them knew it had ever been there.
+    """
+    from scripts.readme_claims import ClaimsRegisterError
+
+    register = tmp_path / "extra-pipe.md"
+    register.write_text(
+        f"""{BEGIN}
+| # | Claim | Implemented in | Proven by |
+|---|---|---|---|
+| C1 | Routing happens | correctly | `app/x.py` | `tests/test_x.py::test_y` |
+{END}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ClaimsRegisterError) as raised:
+        parse_claims(register)
+    assert "4 cells" in str(raised.value)
+
+
 def test_the_parser_rejects_a_damaged_register(tmp_path):
     """Mutation check on the reader itself.
 

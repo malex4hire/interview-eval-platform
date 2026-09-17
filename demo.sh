@@ -41,7 +41,10 @@ while [ "$#" -gt 0 ]; do
         --host) HOST="${2:?--host needs a value}"; shift 2 ;;
         --no-serve) SERVE=0; shift ;;
         --reset) RESET=1; shift ;;
-        -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        # Prints the header comment above, stopping at the first line that is
+        # not a comment. A hardcoded line range drifts the moment the header is
+        # edited, and had already drifted into printing `set -euo pipefail`.
+        -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
         *) echo "demo.sh: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
