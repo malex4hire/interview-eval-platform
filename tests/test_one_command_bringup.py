@@ -252,6 +252,32 @@ def test_the_command_asked_the_operator_for_nothing(demo_instance):
     assert "Traceback" not in output
 
 
+def test_the_run_took_the_interpreter_path_it_was_asked_to(demo_instance):
+    """The bare/shortcut distinction must be observable, not assumed.
+
+    IEP_DEMO_BARE was the only thing separating the CI `demo` job from the
+    bring-up test the matrix already runs three times, and nothing asserted the
+    bare path was actually taken. Rename or drop the variable in a workflow
+    edit and the fixture quietly takes the shortcut branch, every assertion
+    passes, and ci.yml's claim that this job "proves a bare runner works" stops
+    being true with nothing red.
+
+    demo.sh already prints which path it took; this reads it.
+    """
+    output = demo_instance["log"].read_text(errors="replace")
+    if BARE:
+        assert "creating .venv" in output, (
+            "IEP_DEMO_BARE=1 but the script did not build its own virtualenv; "
+            f"the install leg was not exercised\n--- output ---\n{output}"
+        )
+        assert "using the interpreter named by DEMO_PYTHON" not in output
+    else:
+        assert "using the interpreter named by DEMO_PYTHON" in output, (
+            "expected the offline shortcut, but the script did not take it\n"
+            f"--- output ---\n{output}"
+        )
+
+
 def test_the_clean_tree_carries_no_prebuilt_state():
     """Guards the fixture itself.
 

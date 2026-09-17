@@ -160,12 +160,16 @@ under one.
 **The recovery path, concretely.** Add a line to this file:
 
 ```
-REGISTER_CAP raised to 21 in 8b4fab4c, accepted after the fact.
+REGISTER_CAP raised to 21 in <the offending commit's sha>, accepted after the fact.
 ```
 
 `_exempted_shas` reads this file **at HEAD**, not the offending commit's diff,
 which is what allows a later commit to supply it. A 7-character prefix is
 enough.
+
+The placeholder above is deliberately not hex: an illustrative sha written out
+in full would be harvested as a real exemption by the same reader that harvests
+the genuine ones, and a reader cannot tell an example from a decision.
 
 **It is not laundering, and the difference is checked.** An entry naming the
 constant and the value but *not* the SHA does not clear anything — otherwise

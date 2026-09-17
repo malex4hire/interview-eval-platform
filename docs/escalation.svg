@@ -28,7 +28,7 @@
 <text x="18" y="494" xml:space="preserve"><tspan fill="#8b949e">  llm_verdict </tspan><tspan fill="#d29922">incorrect               </tspan><tspan fill="#8b949e">unchanged — nothing is overwritten</tspan></text>
 <text x="18" y="514" xml:space="preserve"><tspan fill="#8b949e">  final       </tspan><tspan fill="#3fb950">correct                 </tspan><tspan fill="#8b949e">composed from all three positions</tspan></text>
 <text x="18" y="554" xml:space="preserve"><tspan fill="#58a6ff">GET</tspan><tspan fill="#c9d1d9"> /audit-log/verify</tspan><tspan fill="#3fb950">   200</tspan></text>
-<text x="18" y="574" xml:space="preserve"><tspan fill="#8b949e">  </tspan><tspan fill="#3fb950">{&quot;valid&quot;: true, &quot;entries_checked&quot;: 2, &quot;broken_at_seq&quot;: null, &quot;reason&quot;: null}</tspan></text>
+<text x="18" y="574" xml:space="preserve"><tspan fill="#8b949e">  </tspan><tspan fill="#3fb950">{&quot;broken_at_seq&quot;: null, &quot;entries_checked&quot;: 2, &quot;reason&quot;: null, &quot;valid&quot;: true}</tspan></text>
 <text x="18" y="594" xml:space="preserve"><tspan fill="#8b949e">  </tspan><tspan fill="#8b949e">2 hash-chained entries: evaluation.created, human_review.recorded</tspan></text>
 </g>
 </svg>

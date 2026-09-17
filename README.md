@@ -11,13 +11,14 @@ something about a person: the model's verdict and the routed verdict are stored
 separately, nothing is ever overwritten, and the audit log is built so tampering
 is detectable even by someone with database access.
 
-![An interview answer scoring 56 against a confidence threshold of 70, routed to requires_human_review instead of standing as the outcome](docs/escalation.svg)
+![An interview answer whose evaluation carries a confidence of 56 against a threshold of 70, routed to requires_human_review instead of standing as the outcome](docs/escalation.svg)
 
 That image is a recording, not a mock-up. `python -m scripts.escalation_artifact`
 re-drives the API against a throwaway database and redraws it, and
 `tests/test_escalation_artifact.py::test_a_fresh_regeneration_matches_the_committed_artifact`
-fails if a fresh render and the committed one disagree about anything other than
-a timestamp. The transcript it was drawn from is committed beside it, in
+fails if a fresh render and the committed one disagree about anything outside a
+narrow allowlist — timestamps, elapsed durations, generated identifiers and port
+numbers. The transcript it was drawn from is committed beside it, in
 [`docs/escalation-run.json`](docs/escalation-run.json).
 
 ```bash
@@ -74,8 +75,9 @@ paragraph above it is true. So every capability claim in this README is
 registered here against the gate that proves it, and the register itself is
 tested: `tests/test_readme_claims.py` fails if a claim names an artifact that
 does not exist, a test that pytest cannot collect, or a gate carrying a skip
-marker. The `claims` job in CI then runs exactly the node ids this table names,
-so a claim whose gate is red cannot merge.
+marker. The `claims` job in CI then runs exactly the pytest node ids this table names,
+so a claim whose gate is red cannot merge. Rows naming a CI job rather than a
+node id are proven by that job running at all.
 
 Two halves, deliberately split — the tests catch a gate that stopped existing,
 which a green suite cannot see; CI catches a gate that stopped passing.
@@ -112,13 +114,24 @@ than that budget supports, so the cap exists to stop it growing rather than to
 shrink it. Raising `REGISTER_CAP` requires a decision entry in
 [`docs/DECISIONS.md`](docs/DECISIONS.md) in the same commit —
 `tests/test_readme_claims.py::test_no_commit_raises_the_cap_without_a_decision_entry`
-walks the commit range and fails if one goes up without the other.
+walks the commit range and fails if one goes up without the other. If an
+unlogged raise has already landed, the same file records it after the fact —
+see `docs/DECISIONS.md` B5-c, which is the documented recovery path rather than
+a way around the rule.
 
 **What this does not do.** The register is curated: nothing automatically
 notices a new capability claim written into the prose and never added here. A
 prose scanner was considered and rejected — it would have to guess what counts
 as a claim, and a check that cries wolf gets switched off by whoever trusts it
 next. Adding the row is part of writing the sentence.
+
+**Where these gates stop.** Adversarial review of the gates themselves found
+several that can be defeated — an allowlist that disarms a comparison when
+widened, a CI-wiring check satisfied by a comment, a no-prompt check that does
+not look for prompts. They are written down, with the mutation that
+demonstrates each one, in
+[`docs/KNOWN-LIMITATIONS.md`](docs/KNOWN-LIMITATIONS.md). Fixing a gate that
+guards a gate is an unbounded regress; saying where the floor is, is not.
 
 ## Confidence threshold
 

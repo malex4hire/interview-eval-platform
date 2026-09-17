@@ -24,7 +24,9 @@
 #   DEMO_PYTHON  use this interpreter instead of creating a virtualenv. Set by
 #                the test suite so its bring-up check can run offline; the CI
 #                `demo` job deliberately leaves it unset so the install leg is
-#                exercised on a bare runner.
+#                exercised on a bare runner. NOTE: if that interpreter is
+#                missing a dependency this script will pip install INTO it —
+#                point it at a virtualenv, not a system python.
 
 set -euo pipefail
 
@@ -101,6 +103,15 @@ fi
 # --- schema and demo data --------------------------------------------------
 
 if [ "$RESET" -eq 1 ]; then
+    # --reset drops every table. scripts/init_db.py only refuses when
+    # ENVIRONMENT=production, so a .env pointing DATABASE_URL at a real
+    # database with ENVIRONMENT unset would be dropped by a flag documented as
+    # "local demo data only". Refuse anything that is not the local demo file.
+    if [ -n "${DATABASE_URL:-}" ] && [ "${DATABASE_URL#sqlite:///$PWD/}" = "${DATABASE_URL}" ]; then
+        echo "demo.sh: refusing --reset: DATABASE_URL is '${DATABASE_URL}', which is" >&2
+        echo "  not the local demo database under $PWD. --reset drops every table." >&2
+        exit 1
+    fi
     say "rebuilding the schema (--reset)"
     "$PY" -m scripts.init_db --drop
 else

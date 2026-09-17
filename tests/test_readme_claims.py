@@ -62,27 +62,18 @@ except ClaimsRegisterError:
     CLAIMS = []
 
 
-@pytest.fixture(scope="module")
-def collected_node_ids() -> set[str]:
-    """Every test pytest can actually collect, as node ids.
+def _collect(*extra_args: str) -> set[str]:
+    """Node ids pytest actually collects, optionally filtered by marker.
 
-    Collected rather than imported: a test that fails to import, or that a
-    conftest deselects, is not in the suite however much it looks like it is.
+    `-o addopts=` clears the project's own options first. Without it the `-q`
+    already configured there combines with this one into `-qq`, and pytest
+    prints per-file counts instead of node ids — which made every binding look
+    absent.
     """
     completed = subprocess.run(
-        # `-o addopts=` clears the project's own addopts first. Without it the
-        # `-q` already configured there combines with this one into `-qq`, and
-        # pytest prints per-file counts instead of node ids — which made every
-        # binding look absent.
         [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-o",
-            "addopts=",
-            "--collect-only",
-            "-q",
-            "--no-header",
+            sys.executable, "-m", "pytest",
+            "-o", "addopts=", "--collect-only", "-q", "--no-header", *extra_args,
         ],
         cwd=REPO_ROOT,
         capture_output=True,
@@ -90,7 +81,7 @@ def collected_node_ids() -> set[str]:
         timeout=600,
     )
     assert completed.returncode == 0, (
-        f"collection failed\n--- stdout ---\n{completed.stdout}\n"
+        f"collection failed for {extra_args}\n--- stdout ---\n{completed.stdout}\n"
         f"--- stderr ---\n{completed.stderr}"
     )
     return {
@@ -98,6 +89,32 @@ def collected_node_ids() -> set[str]:
         for line in completed.stdout.splitlines()
         if "::" in line and not line.startswith(" ")
     }
+
+
+@pytest.fixture(scope="module")
+def collected_node_ids() -> set[str]:
+    """Every test pytest can collect.
+
+    Collected rather than imported: a test that fails to import, or that a
+    conftest deselects, is not in the suite however much it looks like it is.
+    """
+    return _collect()
+
+
+@pytest.fixture(scope="module")
+def skip_marked_node_ids(collected_node_ids) -> set[str]:
+    """Node ids carrying a skip/skipif/xfail marker.
+
+    Derived by asking PYTEST — collect everything, collect again deselecting
+    those markers, and diff. The previous implementation regexed the source for
+    `^@...` lines above `^def <name>`, which only recognised the one shape the
+    author happened to write. Measured misses: a decorator split across lines
+    (what black and ruff produce), a module-level `pytestmark`, and a blank
+    line between decorator and def. Each really skipped the gate and each read
+    as clean, because a failed regex was treated as "no offence" — evidence
+    unavailable scored as property satisfied.
+    """
+    return collected_node_ids - _collect("-m", "not skip and not skipif and not xfail")
 
 
 def workflow_jobs(workflow: Path) -> list[str]:
@@ -183,21 +200,15 @@ def test_every_named_workflow_gate_is_a_real_job(claim: Claim):
         )
 
 
-def test_no_named_gate_is_skipped():
+def test_no_named_gate_is_skipped(skip_marked_node_ids):
     """Fails if a claim names a skipped gate.
 
     A skip marker on a bound test is the quiet version of deleting it: the
-    suite stays green and the claim stops being proven.
+    suite stays green and the claim stops being proven. Any of skip, skipif or
+    xfail disqualifies a gate — a conditionally-skipped test does not reliably
+    prove the claim that cites it.
     """
-    offenders: list[str] = []
-    for node_id in pytest_node_ids():
-        path, _, test_name = node_id.partition("::")
-        source = (REPO_ROOT / path).read_text(encoding="utf-8")
-        match = re.search(
-            rf"((?:^@.*\n)*)^def {re.escape(test_name)}\b", source, flags=re.MULTILINE
-        )
-        if match and re.search(r"@pytest\.mark\.(skip|skipif|xfail)", match.group(1)):
-            offenders.append(node_id)
+    offenders = sorted(set(pytest_node_ids()) & skip_marked_node_ids)
     assert not offenders, f"claims are bound to skipped gates: {offenders}"
 
 

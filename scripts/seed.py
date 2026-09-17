@@ -131,15 +131,22 @@ ANSWERS = {
 
 
 def _already_seeded() -> bool:
-    """True when the database already carries at least one evaluation.
+    """True when the database already carries seeded demo data.
 
-    Checked rather than assumed, so re-running the demo command is a no-op on
-    existing data instead of a second seed pass or a reset. Any error reading
-    the table (most often: the schema does not exist yet) means "not seeded".
+    Keyed on `interviews`, which is the FIRST non-idempotent write this script
+    makes — `_get_or_create_user` dedupes, `_create_interview` and `_assign` do
+    not. It used to key on `evaluations`, the LAST write, which left a window:
+    interrupt the seed after the interviews commit and before the submissions
+    (Ctrl-C during ./demo.sh, or any failure inside _submit) and the guard read
+    "not seeded", so the documented-safe re-run added a second copy of every
+    interview, question and assignment.
+
+    Any error reading the table (most often: the schema does not exist yet)
+    means "not seeded".
     """
     db = SessionLocal()
     try:
-        return db.execute(select(Evaluation.id).limit(1)).scalar_one_or_none() is not None
+        return db.execute(select(Interview.id).limit(1)).scalar_one_or_none() is not None
     except SQLAlchemyError:
         return False
     finally:
@@ -252,6 +259,10 @@ def main() -> int:
 
     settings = get_settings()
     db = SessionLocal()
+    # One transaction for the whole seed. The intermediate commits used to make
+    # an interrupted run durable in pieces, which is what created the
+    # half-seeded state the guard above then had to reason about. Now an
+    # interrupt rolls the whole thing back and leaves nothing to re-detect.
     try:
         # -- two tenants, so isolation can actually be demonstrated ----------
         admin_a = _get_or_create_user(
@@ -266,7 +277,6 @@ def main() -> int:
             name="Sam Okafor (Globex)",
             role=UserRole.ORG_ADMIN.value,
         )
-        db.commit()
 
         candidates_a = [
             _get_or_create_user(
@@ -289,7 +299,6 @@ def main() -> int:
             role=UserRole.CANDIDATE.value,
             tenant_admin_id=admin_b.id,
         )
-        db.commit()
 
         backend = _create_interview(db, admin_a, BACKEND_INTERVIEW)
         platform = _create_interview(db, admin_b, PLATFORM_INTERVIEW)
@@ -297,7 +306,6 @@ def main() -> int:
         for candidate in candidates_a:
             _assign(db, backend, candidate)
         _assign(db, platform, candidate_b)
-        db.commit()
 
         q_idem, q_index, q_consistency = backend.questions
         q_eval, q_logging = platform.questions

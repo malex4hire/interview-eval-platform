@@ -20,6 +20,7 @@ self-contained, with no external font, stylesheet or image reference.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import shutil
@@ -35,14 +36,23 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "docs"
 # module loads. A throwaway database keeps the recording reproducible and keeps
 # it away from whatever the demo instance is holding.
 _RECORDING_DIR = Path(tempfile.mkdtemp(prefix="escalation-recording-"))
+# Registered at import, because the directory is created at import: the
+# environment override below has to name a real unique path before any app
+# module resolves settings. Without this, merely importing this module for
+# its render functions left a directory behind.
+atexit.register(shutil.rmtree, _RECORDING_DIR, True)
 os.environ["DATABASE_URL"] = f"sqlite:///{_RECORDING_DIR / 'recording.db'}"
 os.environ["AUDIO_STORAGE_DIR"] = str(_RECORDING_DIR / "audio")
 os.environ["JWT_SECRET"] = "recording-only-secret"
 os.environ["ENVIRONMENT"] = "recording"
 # The work factor protects a password database; this one is discarded.
 os.environ["PBKDF2_ITERATIONS"] = "1000"
-os.environ.setdefault("CONFIDENCE_THRESHOLD", "70")
-os.environ.setdefault("LLM_PROVIDER", "mock")
+# Forced, not setdefault. These two decide whether the run escalates at all,
+# so a maintainer with CONFIDENCE_THRESHOLD exported in their shell would
+# otherwise steer the published artifact without knowing it.
+os.environ["CONFIDENCE_THRESHOLD"] = "70"
+os.environ["LLM_PROVIDER"] = "mock"
+os.environ["LLM_MODEL_NAME"] = "mock-eval-v1"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -80,6 +90,22 @@ def record() -> dict[str, Any]:
     """Drive the API until an escalation has been raised, decided and audited."""
     engine.dispose()
     database_path = get_settings().database_url.replace("sqlite:///", "")
+
+    # The environment override at import time is only effective if nothing
+    # resolved settings first — get_settings() is lru_cached, so an in-process
+    # caller that already touched app.core.config keeps ITS database, and the
+    # unlink below would delete that instead of the throwaway one. Checked
+    # rather than assumed: this deletes a file, and "probably the temp one" is
+    # not good enough to delete on.
+    if not database_path.startswith(str(_RECORDING_DIR)):
+        raise RuntimeError(
+            "refusing to record: settings resolved to "
+            f"{database_path!r}, which is not inside the throwaway directory "
+            f"{str(_RECORDING_DIR)!r}. Something imported app.core.config "
+            "before this module, so the recording would run against - and "
+            "delete - a real database. Run this as `python -m "
+            "scripts.escalation_artifact`, not from an in-process caller."
+        )
     Path(database_path).unlink(missing_ok=True)
     with engine.begin() as connection:
         Base.metadata.create_all(connection)
@@ -88,9 +114,22 @@ def record() -> dict[str, Any]:
     client = TestClient(app)
     calls: list[dict[str, Any]] = []
 
-    def call(method: str, path: str, **kwargs) -> Any:
+    def call(method: str, path: str, label: str | None = None, **kwargs) -> Any:
+        """Drive one request and record it.
+
+        `label` is how the renderer finds this call again. Without it the
+        transcript had to hand-write its own method, path and status code, so
+        the published image asserted HTTP results nothing had read back.
+        """
         response = client.request(method, path, **kwargs)
-        calls.append({"method": method, "path": path, "status": response.status_code})
+        calls.append(
+            {
+                "label": label,
+                "method": method,
+                "path": path,
+                "status": response.status_code,
+            }
+        )
         assert response.status_code < 400, (method, path, response.status_code, response.text)
         return response.json()
 
@@ -140,16 +179,18 @@ def record() -> dict[str, Any]:
     submission = call(
         "POST",
         f"/me/interviews/{interview['id']}/questions/{question['id']}/responses",
+        label="submit",
         headers=candidate_auth,
         data={"text": ANSWER},
     )
     evaluation = submission["evaluation"]
 
-    pending = call("GET", "/reviews/pending", headers=admin_auth)
+    pending = call("GET", "/reviews/pending", label="pending", headers=admin_auth)
 
     human_review = call(
         "POST",
         f"/evaluations/{evaluation['id']}/review",
+        label="review",
         headers=admin_auth,
         json={"verdict": REVIEW_VERDICT, "notes": REVIEW_NOTES},
     )
@@ -161,7 +202,7 @@ def record() -> dict[str, Any]:
         "GET", f"/interviews/{interview['id']}/responses", headers=admin_auth
     )[0]["current_evaluation"]
 
-    verification = call("GET", "/audit-log/verify", headers=admin_auth)
+    verification = call("GET", "/audit-log/verify", label="verify", headers=admin_auth)
     audit = call("GET", "/audit-log", headers=admin_auth)
 
     settings = get_settings()
@@ -293,6 +334,35 @@ def build_transcript(run: dict[str, Any]) -> Transcript:
 
     t = Transcript()
 
+    recorded = {c["label"]: c for c in run["calls"] if c.get("label")}
+
+    def request_line(label: str, comment: str = "") -> None:
+        """Draw one request line entirely from what was recorded.
+
+        The method, the path and the status code were all hand-written literals
+        before. That meant the published image asserted HTTP results nothing had
+        read back: change the submit route to return 200, or rename
+        /reviews/pending, and the committed picture went on claiming the old
+        values while the regeneration test stayed green, because the literals
+        rendered identically forever.
+        """
+        try:
+            recorded_call = recorded[label]
+        except KeyError:  # pragma: no cover - a mislabelled call is a bug here
+            raise KeyError(
+                f"no recorded call labelled {label!r}; the transcript would "
+                "have to invent one"
+            ) from None
+        status = recorded_call["status"]
+        segments = [
+            (recorded_call["method"], "blue"),
+            (f" {recorded_call['path']}", "text"),
+            (f"   {status}", "green" if status < 400 else "red"),
+        ]
+        if comment:
+            segments.append((f"   {comment}", "muted"))
+        t.add(*segments)
+
     def field(
         label: str, value: str, colour: str, comment: str = "", bold: bool = False
     ) -> None:
@@ -318,11 +388,7 @@ def build_transcript(run: dict[str, Any]) -> Transcript:
     )
     t.blank()
 
-    t.add(
-        ("POST", "blue"),
-        (" /me/interviews/1/questions/1/responses", "text"),
-        ("   201", "green"),
-    )
+    request_line("submit")
     field("rubric", " · ".join(run["rubric"]), "text")
     for index, line in enumerate(_wrap(run["answer"], COLUMNS - LABEL_WIDTH)):
         t.add(
@@ -364,18 +430,14 @@ def build_transcript(run: dict[str, Any]) -> Transcript:
     )
     t.blank()
 
-    t.add(("GET", "blue"), (" /reviews/pending", "text"), ("   200", "green"))
+    request_line("pending")
     t.add(
         ("  ", "muted"),
         (f"{run['pending_count']} evaluation waiting on a human", "text"),
     )
     t.blank()
 
-    t.add(
-        ("POST", "blue"),
-        (f" /evaluations/{evaluation['id']}/review", "text"),
-        ("   201", "green"),
-    )
+    request_line("review")
     field("human", review["verdict"], "text", "a reviewer overrules the model")
     field(
         "llm_verdict",
@@ -391,7 +453,7 @@ def build_transcript(run: dict[str, Any]) -> Transcript:
     )
     t.blank()
 
-    t.add(("GET", "blue"), (" /audit-log/verify", "text"), ("   200", "green"))
+    request_line("verify")
     t.add(
         ("  ", "muted"),
         (json.dumps(audit["verification"], separators=(", ", ": ")), "green"),
@@ -476,9 +538,19 @@ def main() -> int:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    run = record()
+    try:
+        run = record()
+    finally:
+        # Cleaned up on the failure path too. It used to leak a throwaway
+        # database directory on every exception, and the commonest exception
+        # here is a run that does not escalate.
+        shutil.rmtree(_RECORDING_DIR, ignore_errors=True)
 
     if run["evaluation"]["verdict"] != "requires_human_review":
+        # Reachable only if the pipeline changes such that a non-escalated
+        # evaluation can still be reviewed. Today app/domain/verdicts.py
+        # refuses that with a 409 and record() raises first — but the check
+        # costs nothing and the thing it protects is the README's headline.
         print(
             "Recorded run did not escalate: "
             f"verdict={run['evaluation']['verdict']!r} "
@@ -490,14 +562,21 @@ def main() -> int:
         return 1
 
     recording_path = args.output_dir / "escalation-run.json"
-    recording_path.write_text(json.dumps(run, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    recording_path.write_text(
+        json.dumps(run, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
+    # Render from the committed recording, re-read from disk, rather than from
+    # the in-memory dict. Those are not the same object: the JSON is written
+    # with sort_keys=True, and a dict is dumped verbatim into the image, so the
+    # two used to disagree on key order and the committed SVG could not be
+    # reproduced from the committed JSON. Rendering the round-trip makes
+    # "the transcript it was drawn from is committed beside it" literally true.
     svg_path = args.output_dir / "escalation.svg"
-    svg_path.write_text(render_svg(run), encoding="utf-8")
-
-    # The throwaway database has served its purpose; leaving one behind on
-    # every regeneration is litter.
-    shutil.rmtree(_RECORDING_DIR, ignore_errors=True)
+    svg_path.write_text(
+        render_svg(json.loads(recording_path.read_text(encoding="utf-8"))),
+        encoding="utf-8",
+    )
 
     print(f"recorded {recording_path.name} and rendered {svg_path.name}")
     print(

@@ -15,51 +15,61 @@
   },
   "calls": [
     {
+      "label": null,
       "method": "POST",
       "path": "/auth/register",
       "status": 201
     },
     {
+      "label": null,
       "method": "POST",
       "path": "/auth/register",
       "status": 201
     },
     {
+      "label": null,
       "method": "POST",
       "path": "/interviews",
       "status": 201
     },
     {
+      "label": null,
       "method": "POST",
       "path": "/interviews/1/assignments",
       "status": 201
     },
     {
+      "label": "submit",
       "method": "POST",
       "path": "/me/interviews/1/questions/1/responses",
       "status": 201
     },
     {
+      "label": "pending",
       "method": "GET",
       "path": "/reviews/pending",
       "status": 200
     },
     {
+      "label": "review",
       "method": "POST",
       "path": "/evaluations/1/review",
       "status": 201
     },
     {
+      "label": null,
       "method": "GET",
       "path": "/interviews/1/responses",
       "status": 200
     },
     {
+      "label": "verify",
       "method": "GET",
       "path": "/audit-log/verify",
       "status": 200
     },
     {
+      "label": null,
       "method": "GET",
       "path": "/audit-log",
       "status": 200
