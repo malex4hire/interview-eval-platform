@@ -14,6 +14,10 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # RST-B4 inspects the commit range; at the default depth of 1 the
+          # history is a single commit and the gate would find nothing.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
