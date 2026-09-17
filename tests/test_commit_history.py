@@ -8,93 +8,83 @@ Range resolution, in order:
 
   1. $RST_COMMIT_RANGE, for a caller who knows better than the heuristics.
   2. `main..HEAD`, then `origin/main..HEAD` — the feature-branch case.
-  3. every commit reachable from HEAD, which is what remains once the branch is
-     merged, and what a CI checkout of a pull-request merge ref gives.
+  3. every commit reachable from HEAD — what remains once the branch is merged,
+     and what a CI checkout of a pull-request merge ref gives.
 
-Falling back rather than skipping is deliberate. A skip here would let the
-requirement evaporate in exactly the situation it exists to survive.
+**The fallback fails closed.** A gate has two outcomes, and "I could not work
+out what to measure" is not one of them. Resolution raises `RangeUnresolvable`
+rather than quietly measuring something else when:
 
-CI checks this repository out with fetch-depth: 0. Under the default depth of
-1 the history is truncated to a single commit and step 3 would find nothing —
-so the workflow's fetch-depth is part of this gate, not an optimisation.
+  * this is not a git repository at all;
+  * the repository is SHALLOW and no branch range could be established, so the
+    full-history fallback would be reading a truncated history;
+  * the resolved range contains no commits.
+
+The shallow case is the one worth spelling out, because it is the only way the
+old code could mislead. A depth-1 checkout of a merged `main` still fails — but
+it used to fail reporting "no commit mentions RST-B1", which reads as *the work
+was never done* when the truth is *the history is not here to look at*. Those
+are different facts and the gate now says which one it found.
+
+Post-merge on a full clone the fallback resolves to the whole history, and that
+is not a vacuous pass: the identifiers still have to appear in real commit
+subjects, and test_the_work_is_not_squashed_into_one_commit still requires one
+subject per identifier. CI checks out with fetch-depth: 0 so this path has a
+real history to read.
 """
 
 from __future__ import annotations
 
-import os
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.support.git_range import (
+    RangeResolution,
+    RangeUnresolvable,
+    git,
+    is_shallow,
+    log,
+    resolve_range,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # The identifiers this ICG defines. Explicit rather than scraped from a
 # document: the list IS the requirement, and a scraper that found none would
 # make this test pass by discovering nothing.
-RST_IDENTIFIERS = ("RST-B1", "RST-B2", "RST-B3", "RST-B4")
-
-
-def _git(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True
-    )
-
-
-def _log(fmt: str, revision_range: str | None) -> list[str]:
-    args = ["log", f"--format={fmt}", "--no-merges"]
-    if revision_range:
-        args.append(revision_range)
-    completed = _git(*args)
-    if completed.returncode != 0:
-        return []
-    return [line for line in completed.stdout.splitlines() if line.strip()]
-
-
-def _resolve_range() -> str | None:
-    """The range to inspect, or None meaning "everything reachable from HEAD"."""
-    explicit = os.environ.get("RST_COMMIT_RANGE")
-    if explicit:
-        return explicit
-    for base in ("main", "origin/main"):
-        if _git("rev-parse", "--verify", "--quiet", base).returncode != 0:
-            continue
-        if _log("%s", f"{base}..HEAD"):
-            return f"{base}..HEAD"
-    return None
+RST_IDENTIFIERS = ("RST-B1", "RST-B2", "RST-B3", "RST-B4", "RST-B5")
 
 
 @pytest.fixture(scope="module")
-def revision_range() -> str | None:
-    if _git("rev-parse", "--git-dir").returncode != 0:
-        pytest.fail("not a git repository, so the commit history cannot be checked")
-    return _resolve_range()
+def resolution() -> RangeResolution:
+    try:
+        return resolve_range()
+    except RangeUnresolvable as exc:
+        pytest.fail(f"RST-B4 cannot establish a commit range to check: {exc}")
 
 
 @pytest.fixture(scope="module")
-def message_lines(revision_range) -> list[str]:
+def message_lines(resolution) -> list[str]:
     """Subjects and bodies, so an identifier may be named in either."""
-    lines = _log("%s%n%b", revision_range)
-    assert lines, (
-        f"no commits found in range {revision_range or 'HEAD'}. If this is CI, "
-        "the checkout is probably shallow — RST-B4 needs fetch-depth: 0."
-    )
-    return lines
+    return log("%s%n%b", resolution.revision_range)
 
 
 @pytest.fixture(scope="module")
-def subjects(revision_range) -> list[str]:
-    return _log("%s", revision_range)
+def subjects(resolution) -> list[str]:
+    return log("%s", resolution.revision_range)
 
 
 @pytest.mark.parametrize("identifier", RST_IDENTIFIERS)
-def test_a_commit_names_each_rst_identifier(identifier: str, message_lines):
+def test_a_commit_names_each_rst_identifier(identifier: str, message_lines, resolution):
     """SPEC: one commit per RST minimum, each naming the identifier."""
     matching = [line for line in message_lines if identifier in line]
     assert matching, (
-        f"no commit in the range mentions {identifier}. "
-        "Each RST in this ICG lands as its own commit, naming what it satisfies."
+        f"no commit mentions {identifier} in "
+        f"{resolution.revision_range or 'the full history'} "
+        f"(resolved via {resolution.source}). Each RST in this ICG lands as its "
+        "own commit, naming what it satisfies."
     )
 
 
@@ -121,3 +111,80 @@ def test_identifiers_are_named_in_a_recognisable_form():
     parametrised test would report it as missing work rather than as a typo."""
     for identifier in RST_IDENTIFIERS:
         assert re.fullmatch(r"RST-B\d", identifier), identifier
+
+
+# ---------------------------------------------------------------------------
+# the fallback itself
+# ---------------------------------------------------------------------------
+
+
+def _init_repo(path: Path, *subjects_to_commit: str) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    git("init", "-q", "-b", "work", str(path), repo=path.parent)
+    for setting, value in (
+        ("user.name", "test"),
+        ("user.email", "test@example.invalid"),
+    ):
+        git("config", setting, value, repo=path)
+    for subject in subjects_to_commit:
+        git("commit", "-q", "--allow-empty", "-m", subject, repo=path)
+    return path
+
+
+def test_resolution_refuses_when_the_directory_is_not_a_repository(tmp_path):
+    """Fail closed, loudly, rather than measure nothing."""
+    with pytest.raises(RangeUnresolvable, match="not a git repository"):
+        resolve_range(tmp_path)
+
+
+def test_resolution_refuses_a_shallow_history_it_cannot_trust(tmp_path, monkeypatch):
+    """The fallback path's own gate.
+
+    A depth-1 clone can see one commit. Reading that as "the full history" and
+    reporting which identifiers are missing would be an accusation built on a
+    truncated record, so resolution refuses instead.
+    """
+    monkeypatch.delenv("RST_COMMIT_RANGE", raising=False)
+    deep = _init_repo(
+        tmp_path / "deep",
+        "RST-B1: a",
+        "RST-B2: b",
+        "RST-B3: c",
+        "RST-B4: d",
+        "later unrelated work",
+    )
+    shallow = tmp_path / "shallow"
+    git("clone", "-q", "--depth", "1", f"file://{deep}", str(shallow), repo=tmp_path)
+    assert is_shallow(shallow), "fixture precondition: the clone must be shallow"
+
+    with pytest.raises(RangeUnresolvable, match="shallow"):
+        resolve_range(shallow)
+
+
+def test_resolution_refuses_an_explicit_range_that_names_nothing(tmp_path, monkeypatch):
+    """An unresolvable override is refused rather than silently ignored."""
+    repo = _init_repo(tmp_path / "repo", "RST-B1: a")
+    monkeypatch.setenv("RST_COMMIT_RANGE", "HEAD..HEAD")
+    with pytest.raises(RangeUnresolvable, match="names no commits"):
+        resolve_range(repo)
+
+
+def test_a_full_history_with_the_work_missing_reads_as_missing_work(
+    tmp_path, monkeypatch
+):
+    """The other side of the distinction.
+
+    When the history IS trustworthy and the identifiers are absent, that is a
+    real finding and resolution must NOT refuse — otherwise the unresolvable
+    branch would swallow the failure this gate exists to report.
+    """
+    monkeypatch.delenv("RST_COMMIT_RANGE", raising=False)
+    repo = _init_repo(tmp_path / "plain", "unrelated work")
+
+    resolved = resolve_range(repo)
+    assert resolved.source == "full-history"
+    assert not [
+        line
+        for line in log("%s%n%b", resolved.revision_range, repo=repo)
+        if any(identifier in line for identifier in RST_IDENTIFIERS)
+    ]

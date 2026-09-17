@@ -2,23 +2,67 @@
 
 What this repository learned by being worked on. Newest first.
 
-## 2026-09-17 — reachability and evidence (RST-B1 … RST-B4)
+## 2026-09-17 — reachability and evidence (RST-B1 … RST-B5)
 
-### A README is the least-tested file in a repository, and it was wrong
+### PATTERN — false public claims survive indefinitely under green CI
 
-The routing table under "Confidence threshold" claimed the seeded strong answer
-scored coverage 1.00 at confidence 100, and that the decisively wrong one
-scored 98. Running the seed gives 0.80/84 and 0.00/100. Two of three rows were
-wrong, in the section documenting the feature the repository is most proud of,
-in a repository whose CI was green the whole time.
+Two of three rows in the README's routing table were wrong, in the section
+documenting the feature this repository is proudest of, while five CI jobs ran
+green over them for the life of the table. This is the exact failure the
+repository argues against, committed by the repository itself.
 
-Nobody wrote those numbers carelessly — they were plausible, and they were
-never re-read after the scoring code moved. That is the point: prose has no
-regression test, so it rots silently while the suite stays green.
+The pattern generalises past this table: **a claim with no gate has no failure
+mode.** Code that stops working goes red. Prose that stops being true does
+nothing at all — it just sits there being read. CI is not evidence about any
+sentence in a README unless something binds the two, which is why the claims
+register exists and why it is enforced rather than encouraged.
+
+The tell is cheap to check: for any sentence a reader would act on, ask what
+would go red if it became false. If the answer is nothing, the sentence is
+unverified regardless of how green the badge is.
+
+The specifics: the table claimed the seeded strong answer scored coverage 1.00
+at confidence 100, and the decisively wrong one 98. The seed gives 0.80/84 and
+0.00/100. Nobody wrote those numbers carelessly — they were plausible, and they
+were simply never re-read after the scoring code moved.
 
 The fix is not proofreading. `test_the_readme_routing_table_matches_the_seeded_run`
 runs the seed and compares the database against the table. The table cannot
 drift again without something going red.
+
+### A parser that skips what it cannot read is a gate checking nothing
+
+The claims parser was fixed once for a stray `|` in a cell. That fix was
+case-specific, and review caught it: three other shapes were still dropped in
+silence — a row that lost its leading pipe (still valid GitHub-flavoured
+markdown, and an utterly ordinary edit), a row whose identifier cell was blank,
+and any stray prose left between the markers. In each case the register parsed,
+the suite went green, and one fewer claim was being checked than the README
+displayed.
+
+That is the same defect as the routing table above, one level in: a mechanism
+reporting success while quietly measuring less than it appears to.
+
+The fix is structural rather than another special case. Every non-blank line
+between the markers must be accounted for as exactly one of header, alignment
+row, or claim, and `rows-parsed == rows-present` is asserted against the real
+register. Fixing the case you were shown, when the case was an example of a
+class, leaves the class.
+
+### "Fail closed" means the gate must distinguish its own failure from yours
+
+RST-B4 resolves a commit range, falling back through `main..HEAD`,
+`origin/main..HEAD`, and finally the whole history. The fallback did fail
+closed — no vacuous pass could be constructed against it — but it conflated two
+different findings under one message. A shallow checkout reported "no commit
+mentions RST-B1", which reads as *the work was never done*, when the truth was
+*the history is not here to look at*.
+
+A gate has two outcomes, and "I could not work out what to measure" is neither
+of them. Resolution now raises rather than silently measuring something else,
+and the fallback path has its own tests: a non-repository, a shallow clone, and
+an override naming no commits each refuse, while a trustworthy history missing
+the identifiers still reports missing work.
 
 ### "Coverage 1.00" was actually 0.80, and the reason is a matcher quirk
 

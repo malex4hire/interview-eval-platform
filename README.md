@@ -105,6 +105,15 @@ which a green suite cannot see; CI catches a gate that stopped passing.
 | C20 | The escalation image above is regenerated from a real run and fails the suite if it drifts | `scripts/escalation_artifact.py` | `tests/test_escalation_artifact.py::test_a_fresh_regeneration_matches_the_committed_artifact` |
 <!-- claims:end -->
 
+**The register is capped at 20 claims.** This repository is depth evidence, not
+the first thing a reviewer reads, and README surface competes with the artifact
+above the fold for the only thirty seconds that matter. Twenty is already more
+than that budget supports, so the cap exists to stop it growing rather than to
+shrink it. Raising `REGISTER_CAP` requires a decision entry in
+[`docs/DECISIONS.md`](docs/DECISIONS.md) in the same commit —
+`tests/test_readme_claims.py::test_no_commit_raises_the_cap_without_a_decision_entry`
+walks the commit range and fails if one goes up without the other.
+
 **What this does not do.** The register is curated: nothing automatically
 notices a new capability claim written into the prose and never added here. A
 prose scanner was considered and rejected — it would have to guess what counts

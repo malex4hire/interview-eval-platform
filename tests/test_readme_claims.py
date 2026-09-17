@@ -36,7 +36,15 @@ from scripts.readme_claims import (
     Claim,
     ClaimsRegisterError,
     parse_claims,
+    REGISTER_CAP,
     pytest_node_ids,
+    register_rows,
+)
+from tests.support.git_range import (
+    RangeUnresolvable,
+    commits,
+    git,
+    resolve_range,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -221,6 +229,71 @@ def test_the_register_is_not_empty():
     )
 
 
+def test_every_row_present_in_the_register_is_parsed():
+    """The structural property: rows-parsed == rows-present.
+
+    Asserted on the real README, not on a fixture. A parser that skips a line
+    it cannot read keeps reporting green while checking fewer claims than the
+    register appears to hold — the same shape as a README table that five green
+    CI jobs never looked at. Header row + alignment row + one line per claim
+    must account for every non-blank line between the markers.
+    """
+    present = len(register_rows())
+    accounted = len(CLAIMS) + 2  # header, alignment
+    assert accounted == present, (
+        f"the register has {present} non-blank lines but {accounted} were "
+        f"accounted for; {present - accounted} row(s) are checked by nothing"
+    )
+
+
+@pytest.mark.parametrize(
+    "label,row",
+    [
+        # Still valid GitHub-flavoured markdown, and a completely ordinary edit.
+        ("leading pipe dropped", "C9 | A claim | `demo.sh` | `tests/t.py::test_a` |"),
+        ("identifier left blank", "|  | A claim | `demo.sh` | `tests/t.py::test_a` |"),
+        ("stray prose between the markers", "TODO: put the chain claim back"),
+        ("pipe inside a cell", "| C9 | A | claim | `demo.sh` | `tests/t.py::test_a` |"),
+    ],
+)
+def test_no_unparseable_row_is_skipped(tmp_path, label, row):
+    """Every way a row can be unreadable must FAIL the gate, not vanish.
+
+    Each of these four was silently dropped before: the register parsed, the
+    suite went green, and one fewer claim was being checked than the README
+    displayed. Parametrised over shapes a real editor produces rather than the
+    single case the first fix happened to handle.
+    """
+    register = tmp_path / f"{label.replace(' ', '-')}.md"
+    register.write_text(
+        f"""{BEGIN}
+| # | Claim | Implemented in | Proven by |
+|---|---|---|---|
+| C1 | A well-formed claim | `demo.sh` | `tests/t.py::test_a` |
+{row}
+{END}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ClaimsRegisterError):
+        parse_claims(register)
+
+
+def test_a_register_without_its_header_is_refused(tmp_path):
+    """A markdown table needs a header to render at all; a register missing one
+    is damaged, and damage is refused rather than partially read."""
+    register = tmp_path / "headerless.md"
+    register.write_text(
+        f"""{BEGIN}
+| C1 | A claim | `demo.sh` | `tests/t.py::test_a` |
+{END}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ClaimsRegisterError, match="header"):
+        parse_claims(register)
+
+
 def test_a_malformed_row_raises_instead_of_vanishing(tmp_path):
     """A claim row that does not split into four cells must be loud.
 
@@ -299,3 +372,161 @@ def test_the_parser_rejects_a_damaged_register(tmp_path):
     empty_register.write_text(f"{BEGIN}\n\n{END}\n", encoding="utf-8")
     with pytest.raises(ClaimsRegisterError):
         parse_claims(empty_register)
+
+
+# ---------------------------------------------------------------------------
+# RST-B5 — the register is bounded
+# ---------------------------------------------------------------------------
+
+_CAP_PATTERN = re.compile(r"^REGISTER_CAP\s*=\s*(\d+)", re.MULTILINE)
+CAP_SOURCE = "scripts/readme_claims.py"
+DECISION_LOG = "docs/DECISIONS.md"
+
+
+def cap_at(revision: str, repo: Path = REPO_ROOT) -> int | None:
+    """The cap as of a revision, or None if it did not exist yet."""
+    shown = git("show", f"{revision}:{CAP_SOURCE}", repo=repo)
+    if shown.returncode != 0:
+        return None
+    match = _CAP_PATTERN.search(shown.stdout)
+    return int(match.group(1)) if match else None
+
+
+def cap_raises_without_a_decision(
+    revision_range: str | None, repo: Path = REPO_ROOT
+) -> list[str]:
+    """SHAs in the range that raise the cap without logging a decision.
+
+    Introducing the cap is not a raise — there is nothing to raise from — so a
+    commit whose parent has no cap is skipped. Lowering it is not a raise
+    either: tightening a bound needs no permission.
+    """
+    offenders: list[str] = []
+    for sha in commits(revision_range, repo=repo):
+        after = cap_at(sha, repo=repo)
+        before = cap_at(f"{sha}^", repo=repo)
+        if after is None or before is None or after <= before:
+            continue
+
+        touched = git(
+            "show", "--name-only", "--format=", sha, repo=repo
+        ).stdout.split()
+        if DECISION_LOG not in touched:
+            offenders.append(sha)
+            continue
+
+        # "Corresponding" is load-bearing: touching the file is not the same as
+        # recording the decision, so the new value has to appear in what the
+        # commit ADDED to the log.
+        diff = git("show", sha, "--", DECISION_LOG, repo=repo).stdout
+        added = [
+            line for line in diff.splitlines()
+            if line.startswith("+") and not line.startswith("+++")
+        ]
+        if not any(str(after) in line for line in added):
+            offenders.append(sha)
+    return offenders
+
+
+def test_the_register_is_within_its_cap():
+    """SPEC: the register does not grow without a decision."""
+    assert len(CLAIMS) <= REGISTER_CAP, (
+        f"the claims register holds {len(CLAIMS)} claims against a cap of "
+        f"{REGISTER_CAP}. Raise REGISTER_CAP in {CAP_SOURCE} and record why in "
+        f"{DECISION_LOG}, in the same commit — or do not add the claim."
+    )
+
+
+def test_the_cap_matches_the_register_it_bounds():
+    """A cap far above the register would be a cap in name only.
+
+    RST-B5 sets it to the registered count, so drift in either direction is a
+    finding: claims removed without lowering it leaves silent headroom.
+    """
+    assert REGISTER_CAP == len(CLAIMS), (
+        f"REGISTER_CAP is {REGISTER_CAP} but the register holds {len(CLAIMS)}. "
+        "The cap is set to the registered count; move them together, with a "
+        f"decision entry in {DECISION_LOG} when the cap goes up."
+    )
+
+
+def test_no_commit_raises_the_cap_without_a_decision_entry():
+    """SPEC: raising the cap requires a decision log entry in the same commit."""
+    try:
+        resolution = resolve_range()
+    except RangeUnresolvable as exc:
+        pytest.fail(f"RST-B5 cannot establish a commit range to check: {exc}")
+
+    offenders = cap_raises_without_a_decision(resolution.revision_range)
+    assert not offenders, (
+        f"these commits raise REGISTER_CAP with no corresponding entry in "
+        f"{DECISION_LOG}: {offenders}"
+    )
+
+
+def _cap_repo(path: Path, cap: int) -> Path:
+    """A miniature repository carrying a cap and a decision log."""
+    path.mkdir(parents=True, exist_ok=True)
+    git("init", "-q", "-b", "work", str(path), repo=path.parent)
+    git("config", "user.name", "test", repo=path)
+    git("config", "user.email", "test@example.invalid", repo=path)
+    (path / "scripts").mkdir(exist_ok=True)
+    (path / "docs").mkdir(exist_ok=True)
+    (path / CAP_SOURCE).write_text(f"REGISTER_CAP = {cap}\n", encoding="utf-8")
+    (path / DECISION_LOG).write_text("# Decisions\n", encoding="utf-8")
+    git("add", "-A", repo=path)
+    git("commit", "-q", "-m", "RST-B5: set the cap", repo=path)
+    return path
+
+
+def _raise_cap(repo: Path, cap: int, *, log_decision: bool, subject: str) -> None:
+    (repo / CAP_SOURCE).write_text(f"REGISTER_CAP = {cap}\n", encoding="utf-8")
+    if log_decision:
+        with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
+            handle.write(f"\n### Cap raised to {cap}\n\nBecause of a reason.\n")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", subject, repo=repo)
+
+
+def test_a_cap_raise_without_a_decision_is_caught(tmp_path):
+    """The detector's red case, on a repository built for it."""
+    repo = _cap_repo(tmp_path / "unlogged", 20)
+    _raise_cap(repo, 21, log_decision=False, subject="sneak one more claim in")
+
+    assert cap_raises_without_a_decision(None, repo=repo), (
+        "a commit raised the cap with no decision entry and was not caught"
+    )
+
+
+def test_a_cap_raise_with_a_decision_is_allowed(tmp_path):
+    """The detector's green case. Without this the check could be a constant
+    'fail' and the red case above would not notice."""
+    repo = _cap_repo(tmp_path / "logged", 20)
+    _raise_cap(repo, 21, log_decision=True, subject="RST-B5: raise the cap to 21")
+
+    assert not cap_raises_without_a_decision(None, repo=repo)
+
+
+def test_touching_the_decision_log_is_not_recording_a_decision(tmp_path):
+    """"Corresponding" means the entry is about this raise.
+
+    Editing the log for some unrelated reason in the same commit must not
+    launder a cap raise — otherwise the requirement degrades into "remember to
+    touch two files".
+    """
+    repo = _cap_repo(tmp_path / "unrelated", 20)
+    (repo / CAP_SOURCE).write_text("REGISTER_CAP = 21\n", encoding="utf-8")
+    with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
+        handle.write("\n### Something else entirely\n\nUnrelated note.\n")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "raise the cap, mention nothing", repo=repo)
+
+    assert cap_raises_without_a_decision(None, repo=repo)
+
+
+def test_lowering_the_cap_needs_no_decision(tmp_path):
+    """Tightening a bound needs no permission; only loosening one does."""
+    repo = _cap_repo(tmp_path / "lowered", 20)
+    _raise_cap(repo, 19, log_decision=False, subject="drop a claim, lower the cap")
+
+    assert not cap_raises_without_a_decision(None, repo=repo)

@@ -4,7 +4,7 @@ Design decisions taken while working on this repository, and why. The
 product-level decisions (D-1 … D-8) live in README.md; this file records the
 ones made during later work on the repository itself.
 
-## 2026-09-17 — reachability and evidence (RST-B1 … RST-B4)
+## 2026-09-17 — reachability and evidence (RST-B1 … RST-B5)
 
 ### B1-a — the one command is a shell script, not a compose stack
 
@@ -103,6 +103,28 @@ Range resolution tries `$RST_COMMIT_RANGE`, then `main..HEAD`, then
 the requirement evaporate exactly when the branch is merged — the situation it
 exists to survive. CI checks out with `fetch-depth: 0` for the same reason; at
 the default depth of 1 there is no history to inspect.
+
+### B5-a — the claims register is capped, and the cap is a decision
+
+`REGISTER_CAP = 20` in `scripts/readme_claims.py`, set to the count the
+register currently holds. Existing claims were not cut; the constraint is that
+the register stops growing, not that it shrinks.
+
+The reasoning is D-1. This repository is depth evidence rather than the first
+thing read, and everything added to the README competes with the escalation
+artifact for the same thirty seconds of a reviewer's attention. Twenty claims
+already exceeds that budget, so the next one has to be worth displacing
+something.
+
+Enforced rather than encouraged: raising the cap requires an entry in this file
+in the same commit, and the entry must mention the new value. Touching the log
+for an unrelated reason does not launder a raise — otherwise the requirement
+decays into "remember to edit two files". Lowering the cap needs no entry;
+tightening a bound needs no permission.
+
+The check walks the commit range with the same resolver RST-B4 uses
+(`tests/support/git_range.py`), so it fails closed on a history it cannot
+trust rather than passing over one it cannot read.
 
 ### Out of scope, deliberately
 

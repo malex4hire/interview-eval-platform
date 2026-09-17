@@ -30,6 +30,18 @@ README = REPO_ROOT / "README.md"
 BEGIN = "<!-- claims:begin -->"
 END = "<!-- claims:end -->"
 
+# RST-B5 — the register is bounded.
+#
+# This repository is depth evidence, not the first thing read (D-1), and README
+# surface competes with the artifact above the fold for the only thirty seconds
+# that matter. Twenty claims already exceeds that budget; the constraint is that
+# it stops there, not that it shrinks.
+#
+# Raising this number requires a decision entry in docs/DECISIONS.md in the SAME
+# commit — enforced by tests/test_readme_claims.py, not by convention. The cap
+# is a deliberate decision each time it moves, or it is not a cap.
+REGISTER_CAP = 20
+
 _CODE_SPAN = re.compile(r"`([^`]+)`")
 _PYTEST_NODE = re.compile(r"^tests/[\w/]+\.py::[\w\[\]\-.]+$")
 _WORKFLOW_JOB = re.compile(r"^\.github/workflows/[\w.-]+\.yml::[\w-]+$")
@@ -69,39 +81,100 @@ def register_source(readme: Path = README) -> str:
     return markdown[start:end]
 
 
+def register_rows(readme: Path = README) -> list[tuple[int, str]]:
+    """Every non-blank line between the markers, with its line number.
+
+    The denominator for the structural check: whatever is in here must come
+    back out as a header row, an alignment row, or a claim. Nothing may be
+    quietly passed over.
+    """
+    return [
+        (number, line.strip())
+        for number, line in enumerate(register_source(readme).splitlines(), start=1)
+        if line.strip()
+    ]
+
+
 def parse_claims(readme: Path = README) -> list[Claim]:
-    """Read the register into rows. Raises rather than returning [] on damage."""
+    """Read the register into rows.
+
+    Every non-blank line is accounted for as exactly one of: the header row,
+    the alignment row, or a claim. Anything else raises.
+
+    That total-accounting property is the point, not a nicety. A parser that
+    skips a line it cannot read goes on reporting green while checking one
+    fewer claim than the register appears to contain — the same shape of
+    defect as a README table that five green CI jobs never looked at. Three
+    such skips used to live here: a row that lost its leading pipe (which is
+    still valid GitHub-flavoured markdown), a row whose identifier cell was
+    blank, and any stray prose someone left between the markers.
+    """
     claims: list[Claim] = []
-    for line in register_source(readme).splitlines():
-        line = line.strip()
+    header_seen = False
+    alignment_seen = False
+
+    for number, line in register_rows(readme):
         if not line.startswith("|"):
-            continue
+            raise ClaimsRegisterError(
+                f"line {number} of the claims register is not a table row: "
+                f"{line!r}. Every non-blank line between the markers must be a "
+                "row starting with '|'. Skipping it would drop a claim in "
+                "silence, which is the failure this parser exists to avoid."
+            )
+
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         if len(cells) != 4:
-            # Skipping here would be a fail-open: a claim whose text contains a
-            # stray pipe would drop out of the register silently, and every
-            # check downstream would pass because it no longer knew about it.
             raise ClaimsRegisterError(
-                f"claims row does not have 4 cells (found {len(cells)}): {line!r}. "
-                "A '|' inside a cell splits the row. Write it as '&#124;', "
-                "which GitHub renders as a pipe and this parser does not split "
-                "on. A backslash escape does not help here - the split happens "
-                "before any markdown escaping is considered."
+                f"line {number}: claims row does not have 4 cells "
+                f"(found {len(cells)}): {line!r}. A '|' inside a cell splits "
+                "the row. Write it as '&#124;', which GitHub renders as a pipe "
+                "and this parser does not split on. A backslash escape does "
+                "not help - the split happens before any markdown escaping is "
+                "considered."
             )
-        identifier, text, implemented_in, proven_by = cells
-        # Header row and the alignment row underneath it.
-        if identifier.lower() in {"#", "id", ""} or set(identifier) <= set("-: "):
+
+        if not header_seen and cells[0].casefold() in {"#", "id"}:
+            header_seen = True
             continue
+
+        if not alignment_seen and all(cell and set(cell) <= set("-:") for cell in cells):
+            alignment_seen = True
+            continue
+
+        identifier = cells[0]
+        if not identifier:
+            raise ClaimsRegisterError(
+                f"line {number}: claim row has an empty identifier: {line!r}. "
+                "An unidentified claim used to be discarded here without a word."
+            )
+
         claims.append(
             Claim(
                 identifier=identifier,
-                text=text,
-                artifacts=_CODE_SPAN.findall(implemented_in),
-                gates=_CODE_SPAN.findall(proven_by),
+                text=cells[1],
+                artifacts=_CODE_SPAN.findall(cells[2]),
+                gates=_CODE_SPAN.findall(cells[3]),
             )
         )
+
+    if not header_seen:
+        raise ClaimsRegisterError("claims register has no header row")
+    if not alignment_seen:
+        raise ClaimsRegisterError("claims register has no alignment row")
     if not claims:
         raise ClaimsRegisterError("claims register contains no rows")
+
+    # The structural invariant, asserted rather than assumed: header +
+    # alignment + one line per claim accounts for every line present.
+    accounted = len(claims) + 2
+    present = len(register_rows(readme))
+    if accounted != present:
+        raise ClaimsRegisterError(
+            f"claims register has {present} non-blank lines but only "
+            f"{accounted} were accounted for; {present - accounted} row(s) "
+            "would have been checked by nothing"
+        )
+
     return claims
 
 
