@@ -83,7 +83,10 @@ def parse_claims(readme: Path = README) -> list[Claim]:
             # check downstream would pass because it no longer knew about it.
             raise ClaimsRegisterError(
                 f"claims row does not have 4 cells (found {len(cells)}): {line!r}. "
-                "A '|' inside a cell splits the row; escape it as '\\|'."
+                "A '|' inside a cell splits the row. Write it as '&#124;', "
+                "which GitHub renders as a pipe and this parser does not split "
+                "on. A backslash escape does not help here - the split happens "
+                "before any markdown escaping is considered."
             )
         identifier, text, implemented_in, proven_by = cells
         # Header row and the alignment row underneath it.

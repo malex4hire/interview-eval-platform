@@ -246,6 +246,44 @@ def test_a_malformed_row_raises_instead_of_vanishing(tmp_path):
     assert "4 cells" in str(raised.value)
 
 
+def test_the_remedy_that_error_recommends_actually_works(tmp_path):
+    """An error message that recommends a fix owes proof the fix works.
+
+    The first version of the message above suggested a backslash escape. It
+    does not help: the row is split on '|' before any markdown escaping is
+    considered, so the advice would have sent the next reader in a circle.
+    """
+    from scripts.readme_claims import ClaimsRegisterError
+
+    register = tmp_path / "entity.md"
+    register.write_text(
+        f"""{BEGIN}
+| # | Claim | Implemented in | Proven by |
+|---|---|---|---|
+| C1 | Routing happens &#124; correctly | `demo.sh` | `tests/test_x.py::test_y` |
+{END}
+""",
+        encoding="utf-8",
+    )
+    claims = parse_claims(register)
+    assert len(claims) == 1
+    assert "&#124;" in claims[0].text
+
+    # And the advice the message rejects really is no good.
+    backslash = tmp_path / "backslash.md"
+    backslash.write_text(
+        f"""{BEGIN}
+| # | Claim | Implemented in | Proven by |
+|---|---|---|---|
+| C1 | Routing happens \\| correctly | `demo.sh` | `tests/test_x.py::test_y` |
+{END}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ClaimsRegisterError):
+        parse_claims(backslash)
+
+
 def test_the_parser_rejects_a_damaged_register(tmp_path):
     """Mutation check on the reader itself.
 
