@@ -8,3 +8,10 @@ __pycache__/
 seed.log
 storage/audio/*
 !storage/audio/.gitkeep
+
+# Local automated-review output. Ignored rather than committed for a concrete
+# reason: tests/support/clean_tree.py builds its "clean clone" from
+# `git ls-files --cached --others --exclude-standard`, so anything untracked
+# and unignored here would be copied into a tree that is supposed to contain
+# exactly what a fresh clone contains.
+code-review/

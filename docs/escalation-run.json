@@ -1,0 +1,117 @@
+{
+  "answer": "An index is usually a b-tree, which makes a lookup much faster than a full scan. There is a downside to adding one but I do not remember the details.",
+  "audit": {
+    "entry_count": 2,
+    "event_types": [
+      "evaluation.created",
+      "human_review.recorded"
+    ],
+    "verification": {
+      "broken_at_seq": null,
+      "entries_checked": 2,
+      "reason": null,
+      "valid": true
+    }
+  },
+  "calls": [
+    {
+      "label": null,
+      "method": "POST",
+      "path": "/auth/register",
+      "status": 201
+    },
+    {
+      "label": null,
+      "method": "POST",
+      "path": "/auth/register",
+      "status": 201
+    },
+    {
+      "label": null,
+      "method": "POST",
+      "path": "/interviews",
+      "status": 201
+    },
+    {
+      "label": null,
+      "method": "POST",
+      "path": "/interviews/1/assignments",
+      "status": 201
+    },
+    {
+      "label": "submit",
+      "method": "POST",
+      "path": "/me/interviews/1/questions/1/responses",
+      "status": 201
+    },
+    {
+      "label": "pending",
+      "method": "GET",
+      "path": "/reviews/pending",
+      "status": 200
+    },
+    {
+      "label": "review",
+      "method": "POST",
+      "path": "/evaluations/1/review",
+      "status": 201
+    },
+    {
+      "label": null,
+      "method": "GET",
+      "path": "/interviews/1/responses",
+      "status": 200
+    },
+    {
+      "label": "verify",
+      "method": "GET",
+      "path": "/audit-log/verify",
+      "status": 200
+    },
+    {
+      "label": null,
+      "method": "GET",
+      "path": "/audit-log",
+      "status": 200
+    }
+  ],
+  "confidence_threshold": 70,
+  "evaluation": {
+    "confidence": 56,
+    "confidence_threshold": 70,
+    "coverage": 0.5,
+    "final_verdict": "requires_human_review",
+    "id": 1,
+    "llm_verdict": "incorrect",
+    "matched_concepts": [
+      "b-tree",
+      "lookup"
+    ],
+    "missing_concepts": [
+      "write overhead",
+      "storage"
+    ],
+    "verdict": "requires_human_review",
+    "version": 1
+  },
+  "generated_by": "python -m scripts.escalation_artifact",
+  "pending_count": 1,
+  "provider": {
+    "model": "mock-eval-v1",
+    "name": "mock"
+  },
+  "question": "Explain database indexing and one cost of adding an index.",
+  "review": {
+    "final_verdict_after_review": "correct",
+    "llm_verdict_after_review": "incorrect",
+    "notes": "Names the structure and the read benefit. The cost half is the weaker part of the rubric for this question; passing it.",
+    "routed_verdict_after_review": "requires_human_review",
+    "verdict": "correct"
+  },
+  "rubric": [
+    "b-tree",
+    "lookup",
+    "write overhead",
+    "storage"
+  ]
+}

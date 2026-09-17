@@ -14,6 +14,10 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # RST-B4 inspects the commit range; at the default depth of 1 the
+          # history is a single commit and the gate would find nothing.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -25,8 +29,56 @@ jobs:
       - name: Test
         run: pytest -q
       - name: Seed and check verdict routing
+        # The runner's default shell is `bash -e {0}` with no pipefail, so a
+        # non-zero seed exit is masked by `tee`. Asked for explicitly.
+        shell: bash
         run: |
+          set -o pipefail
           python -m scripts.seed --reset | tee seed.log
           grep -q "routed=correct" seed.log
           grep -q "routed=incorrect" seed.log
           grep -q "routed=requires_human_review" seed.log
+
+  # RST-B1. The bring-up test again, with IEP_DEMO_BARE=1 so demo.sh is handed
+  # no interpreter and has to find one, build its own virtualenv and install its
+  # own dependencies. The matrix job above deliberately takes the shortcut to
+  # stay fast and offline; this job is the one that proves a bare runner works.
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the test runner
+        run: pip install -r requirements.txt
+      - name: One command from a clean checkout, installing its own dependencies
+        env:
+          IEP_DEMO_BARE: "1"
+        run: pytest tests/test_one_command_bringup.py -q
+
+  # RST-B3. The README registers every capability claim against a gate. The
+  # test suite proves those gates RESOLVE; this job proves they PASS, by running
+  # exactly the node ids the register names and nothing else. Both halves are
+  # needed: a gate can stop existing without going red, and a gate can go red
+  # without anyone rereading the README.
+  claims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Extract the gates the README names
+        run: |
+          python -m scripts.readme_claims | tee claim-gates.txt
+          # An empty list would make the next step run the whole suite and pass
+          # for the wrong reason. The parser raises on a damaged register; this
+          # is the belt to that pair of braces.
+          test -s claim-gates.txt
+      - name: Every gate the README names must pass
+        run: xargs -a claim-gates.txt pytest -q

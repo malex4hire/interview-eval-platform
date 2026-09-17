@@ -5,7 +5,7 @@ four candidates, and response sets chosen to exercise every branch of the
 verdict router: a clear pass, a clear fail, an ambiguous answer that routes to
 human review, and an audio submission that goes through the mock transcriber.
 
-    python -m scripts.seed [--reset]
+    python -m scripts.seed [--reset] [--if-empty]
 """
 
 from __future__ import annotations
@@ -15,11 +15,13 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.core.security import hash_password
 from app.models import (
+    Evaluation,
     Interview,
     InterviewAssignment,
     Question,
@@ -128,6 +130,29 @@ ANSWERS = {
 }
 
 
+def _already_seeded() -> bool:
+    """True when the database already carries seeded demo data.
+
+    Keyed on `interviews`, which is the FIRST non-idempotent write this script
+    makes — `_get_or_create_user` dedupes, `_create_interview` and `_assign` do
+    not. It used to key on `evaluations`, the LAST write, which left a window:
+    interrupt the seed after the interviews commit and before the submissions
+    (Ctrl-C during ./demo.sh, or any failure inside _submit) and the guard read
+    "not seeded", so the documented-safe re-run added a second copy of every
+    interview, question and assignment.
+
+    Any error reading the table (most often: the schema does not exist yet)
+    means "not seeded".
+    """
+    db = SessionLocal()
+    try:
+        return db.execute(select(Interview.id).limit(1)).scalar_one_or_none() is not None
+    except SQLAlchemyError:
+        return False
+    finally:
+        db.close()
+
+
 def _get_or_create_user(db, *, email, name, role, tenant_admin_id=None) -> User:
     existing = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
     if existing:
@@ -206,7 +231,24 @@ def main() -> int:
     parser.add_argument(
         "--reset", action="store_true", help="drop and recreate the schema first"
     )
+    parser.add_argument(
+        "--if-empty",
+        action="store_true",
+        help=(
+            "do nothing if the database already holds evaluations. Lets the "
+            "one-command entry point be re-run without ever overwriting a "
+            "verdict that has already been recorded and audited."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.if_empty and args.reset:
+        print("--if-empty and --reset are contradictory; pick one.")
+        return 2
+
+    if args.if_empty and _already_seeded():
+        print("Database already holds evaluations; leaving them untouched.")
+        return 0
 
     if args.reset:
         import subprocess
@@ -217,6 +259,10 @@ def main() -> int:
 
     settings = get_settings()
     db = SessionLocal()
+    # One transaction for the whole seed. The intermediate commits used to make
+    # an interrupted run durable in pieces, which is what created the
+    # half-seeded state the guard above then had to reason about. Now an
+    # interrupt rolls the whole thing back and leaves nothing to re-detect.
     try:
         # -- two tenants, so isolation can actually be demonstrated ----------
         admin_a = _get_or_create_user(
@@ -231,7 +277,6 @@ def main() -> int:
             name="Sam Okafor (Globex)",
             role=UserRole.ORG_ADMIN.value,
         )
-        db.commit()
 
         candidates_a = [
             _get_or_create_user(
@@ -254,7 +299,6 @@ def main() -> int:
             role=UserRole.CANDIDATE.value,
             tenant_admin_id=admin_b.id,
         )
-        db.commit()
 
         backend = _create_interview(db, admin_a, BACKEND_INTERVIEW)
         platform = _create_interview(db, admin_b, PLATFORM_INTERVIEW)
@@ -262,7 +306,6 @@ def main() -> int:
         for candidate in candidates_a:
             _assign(db, backend, candidate)
         _assign(db, platform, candidate_b)
-        db.commit()
 
         q_idem, q_index, q_consistency = backend.questions
         q_eval, q_logging = platform.questions

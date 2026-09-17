@@ -2,7 +2,9 @@
 name = "interview-eval-platform"
 version = "1.0.0"
 description = "AI-driven interview response evaluation platform (backend + API)"
-requires-python = ">=3.11"
+# 3.10 is the floor CI proves (see the matrix in .github/workflows/ci.yml)
+# and what demo.sh accepts. This said 3.11 while both said otherwise.
+requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

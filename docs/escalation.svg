@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="753" height="612" viewBox="0 0 753 612" role="img" aria-label="Terminal transcript: an interview evaluation with confidence 56 falls below the threshold of 70 and is routed to human review.">
+<title>An evaluation routed to human review</title>
+<rect width="753" height="612" rx="8" fill="#0d1117" stroke="#30363d"/>
+<path d="M0 8a8 8 0 0 1 8-8h737a8 8 0 0 1 8 8v26H0z" fill="#161b22"/>
+<line x1="0" y1="34" x2="753" y2="34" stroke="#30363d"/>
+<circle cx="18" cy="17" r="5" fill="#f85149"/>
+<circle cx="34" cy="17" r="5" fill="#d29922"/>
+<circle cx="50" cy="17" r="5" fill="#3fb950"/>
+<text x="376.5" y="22" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#8b949e">confidence router — escalation to human review</text>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">
+<text x="18" y="54" xml:space="preserve"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">python -m scripts.escalation_artifact</tspan></text>
+<text x="18" y="74" xml:space="preserve"><tspan fill="#8b949e">  </tspan><tspan fill="#8b949e">provider mock/mock-eval-v1  ·  confidence threshold 70</tspan></text>
+<text x="18" y="114" xml:space="preserve"><tspan fill="#58a6ff">POST</tspan><tspan fill="#c9d1d9"> /me/interviews/1/questions/1/responses</tspan><tspan fill="#3fb950">   201</tspan></text>
+<text x="18" y="134" xml:space="preserve"><tspan fill="#8b949e">  rubric      </tspan><tspan fill="#c9d1d9">b-tree · lookup · write overhead · storage</tspan></text>
+<text x="18" y="154" xml:space="preserve"><tspan fill="#8b949e">  answer      </tspan><tspan fill="#c9d1d9">An index is usually a b-tree, which makes a lookup much faster than a full</tspan></text>
+<text x="18" y="174" xml:space="preserve"><tspan fill="#8b949e">              </tspan><tspan fill="#c9d1d9">scan. There is a downside to adding one but I do not remember the details.</tspan></text>
+<text x="18" y="214" xml:space="preserve"><tspan fill="#8b949e">  matched     </tspan><tspan fill="#3fb950">b-tree, lookup</tspan></text>
+<text x="18" y="234" xml:space="preserve"><tspan fill="#8b949e">  missing     </tspan><tspan fill="#f85149">write overhead, storage</tspan></text>
+<text x="18" y="254" xml:space="preserve"><tspan fill="#8b949e">  coverage    </tspan><tspan fill="#c9d1d9">0.50                    </tspan><tspan fill="#8b949e">2 of 4 rubric concepts</tspan></text>
+<text x="18" y="294" xml:space="preserve"><tspan fill="#8b949e">  llm_verdict </tspan><tspan fill="#d29922">incorrect               </tspan><tspan fill="#8b949e">what the model said — kept on the record</tspan></text>
+<text x="18" y="314" xml:space="preserve"><tspan fill="#8b949e">  confidence  </tspan><tspan fill="#d29922" font-weight="700">56  &lt;  threshold 70     </tspan><tspan fill="#8b949e">below the gate</tspan></text>
+<text x="18" y="334" xml:space="preserve"><tspan fill="#30363d">--------------------------------------------------------------------------------------------</tspan></text>
+<text x="18" y="354" xml:space="preserve"><tspan fill="#8b949e">  verdict     </tspan><tspan fill="#bc8cff" font-weight="700">requires_human_review   </tspan><tspan fill="#8b949e">escalated — the model does not decide this one</tspan></text>
+<text x="18" y="394" xml:space="preserve"><tspan fill="#58a6ff">GET</tspan><tspan fill="#c9d1d9"> /reviews/pending</tspan><tspan fill="#3fb950">   200</tspan></text>
+<text x="18" y="414" xml:space="preserve"><tspan fill="#8b949e">  </tspan><tspan fill="#c9d1d9">1 evaluation waiting on a human</tspan></text>
+<text x="18" y="454" xml:space="preserve"><tspan fill="#58a6ff">POST</tspan><tspan fill="#c9d1d9"> /evaluations/1/review</tspan><tspan fill="#3fb950">   201</tspan></text>
+<text x="18" y="474" xml:space="preserve"><tspan fill="#8b949e">  human       </tspan><tspan fill="#c9d1d9">correct                 </tspan><tspan fill="#8b949e">a reviewer overrules the model</tspan></text>
+<text x="18" y="494" xml:space="preserve"><tspan fill="#8b949e">  llm_verdict </tspan><tspan fill="#d29922">incorrect               </tspan><tspan fill="#8b949e">unchanged — nothing is overwritten</tspan></text>
+<text x="18" y="514" xml:space="preserve"><tspan fill="#8b949e">  final       </tspan><tspan fill="#3fb950">correct                 </tspan><tspan fill="#8b949e">composed from all three positions</tspan></text>
+<text x="18" y="554" xml:space="preserve"><tspan fill="#58a6ff">GET</tspan><tspan fill="#c9d1d9"> /audit-log/verify</tspan><tspan fill="#3fb950">   200</tspan></text>
+<text x="18" y="574" xml:space="preserve"><tspan fill="#8b949e">  </tspan><tspan fill="#3fb950">{&quot;broken_at_seq&quot;: null, &quot;entries_checked&quot;: 2, &quot;reason&quot;: null, &quot;valid&quot;: true}</tspan></text>
+<text x="18" y="594" xml:space="preserve"><tspan fill="#8b949e">  </tspan><tspan fill="#8b949e">2 hash-chained entries: evaluation.created, human_review.recorded</tspan></text>
+</g>
+</svg>
