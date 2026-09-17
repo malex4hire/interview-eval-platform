@@ -49,20 +49,63 @@ row, or claim, and `rows-parsed == rows-present` is asserted against the real
 register. Fixing the case you were shown, when the case was an example of a
 class, leaves the class.
 
-### "Fail closed" means the gate must distinguish its own failure from yours
+### REFINEMENT — a gate has two outcomes, but a failure has two causes
+
+A gate has two outcomes, verified or fail. That is unchanged. **But a failure
+has two causes, and they have to be reported differently: the property was
+violated, or the evidence was unavailable.**
 
 RST-B4 resolves a commit range, falling back through `main..HEAD`,
-`origin/main..HEAD`, and finally the whole history. The fallback did fail
-closed — no vacuous pass could be constructed against it — but it conflated two
-different findings under one message. A shallow checkout reported "no commit
-mentions RST-B1", which reads as *the work was never done*, when the truth was
-*the history is not here to look at*.
+`origin/main..HEAD`, and finally the whole history. Review expected a vacuous
+pass there. There wasn't one — a repo with no matching commits, a shallow
+clone, `HEAD..HEAD`, a bogus range and a non-repository were all tried, and
+every one failed. The fallback failed closed.
 
-A gate has two outcomes, and "I could not work out what to measure" is neither
-of them. Resolution now raises rather than silently measuring something else,
-and the fallback path has its own tests: a non-repository, a shallow clone, and
-an override naming no commits each refuse, while a trustworthy history missing
-the identifiers still reports missing work.
+**The defect was that it failed for the right reason and said the wrong one.**
+A shallow checkout reported *"no commit mentions RST-B1"*, which is a false
+accusation: the work was there, the history was not. And that erodes trust as
+fast as a vacuous pass, because of what the next person does with it — either
+they go chasing work that was already done, or they learn to read real failures
+as tooling artifacts and start waving them through. A gate nobody believes has
+stopped being a gate.
+
+So: **report the cause, fail either way.** Resolution now raises
+`RangeUnresolvable` for a non-repository, a shallow history with no branch
+range, or an override naming no commits, and each refusal carries its own test.
+The load-bearing one is the opposite direction — a *trustworthy* history that
+genuinely lacks the work must still report missing work — because without it
+the "evidence unavailable" branch would quietly swallow the very failure the
+gate exists to report.
+
+### A check that only ever goes red is indistinguishable from a broken one
+
+Mutation testing naturally produces red rows: break the thing, watch the gate
+fire. All of those together still do not show the gate can tell the difference
+between a violation and anything at all. **A check hardwired to fail passes
+every red test in the set.**
+
+The truth table needs the row where the legitimate path goes green. RST-B5's
+cap gate has four:
+
+| | |
+|---|---|
+| unmutated | green |
+| a 21st claim added, cap untouched | red |
+| cap raised with no decision entry | red |
+| cap raised **with** an entry naming the value | **green** |
+
+The last row is the one doing the work. Without it, "raising the cap with a
+decision entry is allowed" is an untested claim about the gate, and a check
+that refused every raise — including legitimate ones — would look identical
+from the outside until someone hit it for real.
+
+The same reasoning applies one level up, to the mutation harness itself. Three
+harness bugs in this session reported results that were not measurements: a
+case-sensitive grep for `failed` that missed pytest's `FAILED` and reported
+seven gates green; `git archive` producing a tree with no `.git`, so three
+mutations "failed" in a fixture rather than on the mutation; and two paths
+passed as one shell argument, which turned the control run red. **A control row
+catches all three, which is why one belongs in every mutation set.**
 
 ### "Coverage 1.00" was actually 0.80, and the reason is a matcher quirk
 
