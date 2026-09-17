@@ -11,7 +11,30 @@ something about a person: the model's verdict and the routed verdict are stored
 separately, nothing is ever overwritten, and the audit log is built so tampering
 is detectable even by someone with database access.
 
+![An interview answer scoring 56 against a confidence threshold of 70, routed to requires_human_review instead of standing as the outcome](docs/escalation.svg)
+
+That image is a recording, not a mock-up. `python -m scripts.escalation_artifact`
+re-drives the API against a throwaway database and redraws it, and
+`tests/test_escalation_artifact.py::test_a_fresh_regeneration_matches_the_committed_artifact`
+fails if a fresh render and the committed one disagree about anything other than
+a timestamp. The transcript it was drawn from is committed beside it, in
+[`docs/escalation-run.json`](docs/escalation-run.json).
+
+```bash
+git clone https://github.com/malex4hire/interview-eval-platform
+cd interview-eval-platform
+./demo.sh
+```
+
+One command, no credential, nothing to answer. It builds the virtualenv,
+creates the schema with its append-only triggers, seeds two tenants' interviews,
+and serves the API with the human-review queue already populated.
+
 ## Setup
+
+`./demo.sh` is the whole of it, and re-running it is safe — it seeds only when
+the database holds no evaluations, so a recorded verdict is never overwritten.
+The steps it runs, if you would rather do them by hand:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
