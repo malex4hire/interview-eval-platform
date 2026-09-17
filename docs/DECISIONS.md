@@ -157,6 +157,29 @@ line accounts for it retrospectively — late, logged, reviewable, and the
 original commit is untouched. Decided before the first violation rather than
 under one.
 
+**The recovery path, concretely.** Add a line to this file:
+
+```
+REGISTER_CAP raised to 21 in 8b4fab4c, accepted after the fact.
+```
+
+`_exempted_shas` reads this file **at HEAD**, not the offending commit's diff,
+which is what allows a later commit to supply it. A 7-character prefix is
+enough.
+
+**It is not laundering, and the difference is checked.** An entry naming the
+constant and the value but *not* the SHA does not clear anything — otherwise
+any vague note would clear any violation. Reproduced end to end through a real
+merge in
+`test_an_unlogged_raise_that_reached_main_can_be_cleared_forward`: unlogged
+raise merged to `main` → red on the full-history fallback; a vague
+`REGISTER_CAP raised to 21` entry → still red; the same entry naming the SHA →
+green.
+
+One asymmetry worth knowing: because the file is read from the working tree, an
+*uncommitted* edit clears it locally but not in CI. That fails in the safe
+direction — CI is the authority — but it will look confusing once.
+
 ### B4-b — the shallow check runs before any range is derived
 
 It used to sit after both branch-range attempts, so it guarded only the

@@ -717,30 +717,78 @@ def test_a_dated_entry_does_not_launder_a_raise(tmp_path, entry):
     assert cap_raises_without_a_decision(None, repo=repo)
 
 
-def test_a_logged_violation_can_be_cleared_forward(tmp_path):
-    """Review finding 5 — the gate needs a forward remedy.
+def test_an_unlogged_raise_that_reached_main_can_be_cleared_forward(tmp_path):
+    """Review finding 5 — the recovery path, in the shape that actually occurs.
 
-    The check is a property of history, and after the merge the full-history
-    fallback re-finds an old violation on every run forever. This repository
-    never rewrites history, so the only other exits would be a permanently red
-    suite or a rewrite. Naming the SHA in the decision log clears it: late,
-    logged, reviewable, and the original commit is untouched.
+    RST-B5 is a property of commits, so once an unlogged raise merges, the
+    post-merge full-history fallback re-finds it on every run forever. A later
+    commit adding an ordinary decision entry does NOT clear it: the check reads
+    the offending commit's own diff. In a repository whose standing rule is
+    `git revert`, never rewrite, that would leave only a permanently red suite
+    or a history rewrite — and a gate with no recovery gets deleted by whoever
+    hits it, not repaired.
+
+    The remedy is to name the offending SHA on a REGISTER_CAP line in the
+    decision log. `_exempted_shas` reads that file from the working tree at
+    HEAD rather than from any commit's diff, which is precisely what lets a
+    LATER commit supply it.
+
+    Reproduced here through a real merge, against the real range resolver, so
+    the range under test is the full-history fallback a merged branch actually
+    gets — not a convenient linear fixture.
     """
-    repo = _cap_repo(tmp_path / "cleared", 20)
-    _raise_cap(repo, 21, log_decision=False, subject="sneak one more claim in")
+    repo = tmp_path / "merged"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "docs").mkdir(parents=True)
+    git("init", "-q", "-b", "main", str(repo), repo=repo.parent)
+    git("config", "user.name", "test", repo=repo)
+    git("config", "user.email", "test@example.invalid", repo=repo)
+    (repo / CAP_SOURCE).write_text("REGISTER_CAP = 20\n", encoding="utf-8")
+    (repo / DECISION_LOG).write_text("# Decisions\n", encoding="utf-8")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "RST-B5: introduce the cap", repo=repo)
 
-    offenders = cap_raises_without_a_decision(None, repo=repo)
-    assert offenders, "fixture precondition: the raise must be unlogged"
+    # A branch raises the cap, logs nothing, and merges.
+    git("checkout", "-q", "-b", "sneaky", repo=repo)
+    (repo / CAP_SOURCE).write_text("REGISTER_CAP = 21\n", encoding="utf-8")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "add a 21st claim", repo=repo)
+    git("checkout", "-q", "main", repo=repo)
+    git("merge", "-q", "--no-ff", "sneaky", "-m", "Merge sneaky", repo=repo)
 
+    resolution = resolve_range(repo)
+    assert resolution.source == "full-history", (
+        "fixture precondition: a merged branch must reach the full-history "
+        f"fallback, got {resolution.source}"
+    )
+
+    offenders = cap_raises_without_a_decision(resolution.revision_range, repo=repo)
+    assert offenders, "fixture precondition: the merged raise must be an offence"
+    offending_sha = offenders[0]
+
+    # A later entry that names the constant and the value but NOT the sha is
+    # not a remedy. Otherwise "recovery" would just be laundering with an extra
+    # step, and any vague note would clear any violation.
+    with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
+        handle.write("\n### Cap\n\nREGISTER_CAP raised to 21 at some point.\n")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "note the cap change vaguely", repo=repo)
+    assert cap_raises_without_a_decision(
+        resolve_range(repo).revision_range, repo=repo
+    ) == offenders, "a decision entry without the sha must not clear the violation"
+
+    # Naming the sha does clear it.
     with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
         handle.write(
-            f"\n### Retrospective\n\nREGISTER_CAP raised to 21 in {offenders[0]}, "
+            f"\n### Retrospective\n\nREGISTER_CAP raised to 21 in {offending_sha}, "
             "accepted after the fact.\n"
         )
     git("add", "-A", repo=repo)
     git("commit", "-q", "-m", "RST-B5: account for an earlier raise", repo=repo)
 
-    assert not cap_raises_without_a_decision(None, repo=repo)
+    assert not cap_raises_without_a_decision(
+        resolve_range(repo).revision_range, repo=repo
+    ), "naming the offending sha in the decision log did not clear the gate"
 
 
 def test_lowering_the_cap_needs_no_decision(tmp_path):

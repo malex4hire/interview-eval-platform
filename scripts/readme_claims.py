@@ -40,6 +40,16 @@ END = "<!-- claims:end -->"
 # Raising this number requires a decision entry in docs/DECISIONS.md in the SAME
 # commit — enforced by tests/test_readme_claims.py, not by convention. The cap
 # is a deliberate decision each time it moves, or it is not a cap.
+#
+#   Raising it:   add a line to docs/DECISIONS.md naming the constant and the
+#                 new value, e.g. "REGISTER_CAP raised to 21 because ...".
+#
+#   After the fact, if an unlogged raise already landed: add a line naming the
+#                 constant, the value AND the offending commit's sha, e.g.
+#                 "REGISTER_CAP raised to 21 in 8b4fab4c, accepted after the
+#                 fact." The check reads docs/DECISIONS.md at HEAD rather than
+#                 the offending commit's diff, so a later commit can supply it.
+#                 History is never rewritten to clear this.
 REGISTER_CAP = 20
 
 _CODE_SPAN = re.compile(r"`([^`]+)`")
