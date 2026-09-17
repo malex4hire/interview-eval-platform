@@ -130,6 +130,35 @@ The mechanical takeaways, each earned here:
   except a history rewrite in a repository whose rule is never to rewrite.
   Naming the offending SHA in the decision log is the remedy.
 
+### A gate scoped to "this branch" for a requirement about HISTORY blocks every later branch
+
+RST-B4 asserts the work landed as one commit per requirement identifier. The
+gate resolved `main..HEAD` and demanded the identifiers appear in THAT range —
+which is true of the branch that did the work, and false of every branch after
+it.
+
+It was caught by the first pull request that followed: a docs-only change, which
+failed with `no commit mentions RST-B2 in origin/main..HEAD`. Not a flake and
+not a wrong check name — the gate was working exactly as written, against the
+wrong noun. Left alone it would have blocked every future merge, and because the
+`pytest` jobs are required, that means every future merge full stop.
+
+**The tell is the tense.** "The work landed as incremental commits" is a claim
+about what is IN the history. Once it has landed, it is a property of the
+repository, not of whatever range happens to be checked out — and a later branch
+does not re-land it. Resolution now reads the full history, with the explicit
+override and the shallow refusal intact, and carries both rows: a later branch
+carrying no RST work passes, and a history genuinely missing the work still
+fails.
+
+**What actually found it was using the thing.** Two adversarial reviews, twenty
+findings, and a mutation set that never tried the one experiment that mattered —
+*run this gate from a branch that is not the branch it was written on.* The
+first real merge attempt found it in under a minute. Some defects are only
+reachable by the system being used the way it will actually be used, which is an
+argument for shipping a guard early enough that it gets exercised, not for
+reviewing harder.
+
 ### A check that only ever goes red is indistinguishable from a broken one
 
 Mutation testing naturally produces red rows: break the thing, watch the gate

@@ -101,12 +101,6 @@ def resolve_range(repo: Path = REPO_ROOT) -> RangeResolution:
             "out with fetch-depth: 0, or set RST_COMMIT_RANGE explicitly."
         )
 
-    for base in ("main", "origin/main"):
-        if git("rev-parse", "--verify", "--quiet", base, repo=repo).returncode != 0:
-            continue
-        if log("%s", f"{base}..HEAD", repo=repo):
-            return RangeResolution(f"{base}..HEAD", base)
-
     if not log("%s", None, repo=repo):
         raise RangeUnresolvable("the repository has no commits")
     return RangeResolution(None, "full-history")

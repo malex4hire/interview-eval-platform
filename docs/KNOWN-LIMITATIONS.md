@@ -133,6 +133,36 @@ throwaway repositories. It is the repository-level invocation that is vacuous.
   parametrised gate would not be matched by name. Dormant — no bound gate has
   that shape today.
 
+## L-10 — the bare-runner claim is not guarded at merge time
+
+Branch protection on `main` requires three checks: `pytest (3.10)`,
+`pytest (3.12)` and `claims`. **`demo` is deliberately not required**, and it is
+the only proof of RST-B1's claim that one command works on a bare runner — it is
+the sole job that runs the bring-up test with `IEP_DEMO_BARE=1`, where
+`demo.sh` must find an interpreter, build a virtualenv and install requirements
+itself.
+
+So the **dependency-install leg is unguarded at merge time**. A pull request can
+merge with `demo` red.
+
+What remains covered: the bring-up *behaviour* — clean tree, no manual step, no
+credential, a seeded evaluation carrying a routing disposition, an escalation in
+the queue — is asserted by the same test running in shortcut mode inside all
+three `pytest` jobs, which are required. Only the install path is exposed.
+
+**Why it is unrequired rather than required.** `demo` performs two real PyPI
+installs (runner-level, then inside the virtualenv it builds), which makes it
+the job most likely to fail for reasons unrelated to the code. A check that goes
+red on a PyPI outage becomes a check someone removes, and its true positives
+leave with it. It still runs on every pull request and its failures are visible;
+it just does not block.
+
+**The caveat on that reasoning, stated because it is not a measurement.** The
+recommendation came from dependency shape, not from flakiness data. The
+observed record is four runs with zero failures across all five checks — which
+is entirely consistent with a 20% flake rate. Four clean runs is not evidence a
+job is reliable, and nothing here should be read as claiming it is.
+
 ---
 
 ## What survived
