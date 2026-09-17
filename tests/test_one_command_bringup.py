@@ -169,10 +169,27 @@ def demo_instance(tmp_path_factory) -> dict:
 
 @pytest.fixture(scope="module")
 def admin_token(demo_instance) -> str:
-    login = _post_json(
-        f"{demo_instance['base']}/auth/login",
-        {"email": SEED_ADMIN_EMAIL, "password": SEED_PASSWORD},
-    )
+    """Sign in as a seeded admin.
+
+    A 401 here means the seed user does not exist, which means the command
+    served an empty database. Named explicitly: the bare urllib error says
+    "Unauthorized", which reads like an auth bug rather than the missing
+    seed step it actually is.
+    """
+    try:
+        login = _post_json(
+            f"{demo_instance['base']}/auth/login",
+            {"email": SEED_ADMIN_EMAIL, "password": SEED_PASSWORD},
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            pytest.fail(
+                f"the seeded admin {SEED_ADMIN_EMAIL} does not exist, so the "
+                "one command brought up an API with no demo data in it\n"
+                f"--- output ---\n"
+                f"{demo_instance['log'].read_text(errors='replace')}"
+            )
+        raise
     return login["access_token"]
 
 
