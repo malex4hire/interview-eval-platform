@@ -161,6 +161,74 @@ def test_resolution_refuses_a_shallow_history_it_cannot_trust(tmp_path, monkeypa
         resolve_range(shallow)
 
 
+def test_resolution_refuses_a_shallow_clone_that_still_has_a_branch_range(
+    tmp_path, monkeypatch
+):
+    """Review finding 4, pinned — and this was the shape that got through.
+
+    The shallow guard used to sit AFTER both branch-range attempts, so it only
+    covered the full-history fallback. `git clone --no-single-branch --depth 2`
+    leaves `origin/main` resolvable, so `origin/main..HEAD` succeeded, returned
+    the two commits it could see, and the caller reported the three older RST
+    commits as missing work. Measured before the fix:
+
+        resolved='origin/main..HEAD' via origin/main
+        visible=['RST-B5: e', 'RST-B4: d']
+        MISSING -> ['RST-B1', 'RST-B2', 'RST-B3']
+
+    Every one of those exists in the real history. That is the false accusation
+    the refusal is for, reached by the commonest shallow shape there is.
+    """
+    monkeypatch.delenv("RST_COMMIT_RANGE", raising=False)
+    deep = tmp_path / "deep"
+    deep.mkdir()
+    git("init", "-q", "-b", "main", str(deep), repo=tmp_path)
+    git("config", "user.name", "test", repo=deep)
+    git("config", "user.email", "test@example.invalid", repo=deep)
+    git("commit", "-q", "--allow-empty", "-m", "base on main", repo=deep)
+    git("checkout", "-q", "-b", "work", repo=deep)
+    for subject in ("RST-B1: a", "RST-B2: b", "RST-B3: c", "RST-B4: d", "RST-B5: e"):
+        git("commit", "-q", "--allow-empty", "-m", subject, repo=deep)
+
+    shallow = tmp_path / "shallow"
+    git(
+        "clone", "-q", "--no-single-branch", "--depth", "2", "--branch", "work",
+        f"file://{deep}", str(shallow), repo=tmp_path,
+    )
+    assert is_shallow(shallow), "fixture precondition: the clone must be shallow"
+    assert (
+        git("rev-parse", "--verify", "--quiet", "origin/main", repo=shallow).returncode
+        == 0
+    ), "fixture precondition: origin/main must resolve, or this tests nothing"
+
+    with pytest.raises(RangeUnresolvable, match="shallow"):
+        resolve_range(shallow)
+
+
+def test_an_explicit_range_still_works_on_a_shallow_clone(tmp_path, monkeypatch):
+    """The inverse row.
+
+    Refusing every shallow repository outright would be indistinguishable from
+    the guard working. An explicit override is deliberate operator intent and
+    must still resolve.
+    """
+    deep = tmp_path / "deep2"
+    deep.mkdir()
+    git("init", "-q", "-b", "main", str(deep), repo=tmp_path)
+    git("config", "user.name", "test", repo=deep)
+    git("config", "user.email", "test@example.invalid", repo=deep)
+    for subject in ("base", "RST-B1: a", "RST-B2: b"):
+        git("commit", "-q", "--allow-empty", "-m", subject, repo=deep)
+
+    shallow = tmp_path / "shallow2"
+    git("clone", "-q", "--depth", "2", f"file://{deep}", str(shallow), repo=tmp_path)
+    assert is_shallow(shallow)
+
+    monkeypatch.setenv("RST_COMMIT_RANGE", "HEAD~1..HEAD")
+    resolved = resolve_range(shallow)
+    assert resolved.source == "RST_COMMIT_RANGE"
+
+
 def test_resolution_refuses_an_explicit_range_that_names_nothing(tmp_path, monkeypatch):
     """An unresolvable override is refused rather than silently ignored."""
     repo = _init_repo(tmp_path / "repo", "RST-B1: a")

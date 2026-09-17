@@ -81,9 +81,25 @@ def resolve_range(repo: Path = REPO_ROOT) -> RangeResolution:
 
     explicit = os.environ.get("RST_COMMIT_RANGE")
     if explicit:
+        # An explicit override is deliberate operator intent and wins, shallow
+        # or not. Everything below is inference, and inference over a truncated
+        # history is what this function refuses to do.
         if not log("%s", explicit, repo=repo):
             raise RangeUnresolvable(f"RST_COMMIT_RANGE={explicit!r} names no commits")
         return RangeResolution(explicit, "RST_COMMIT_RANGE")
+
+    # Checked BEFORE any range is derived, not only before the full-history
+    # fallback. A shallow clone truncates `origin/main..HEAD` just as readily:
+    # `git clone --no-single-branch --depth 2` resolves that range, returns the
+    # two commits it can see, and the caller reports every older commit as
+    # missing work. That is the false accusation this refusal exists to stop,
+    # and guarding only the fallback left the commonest shallow shape wide open.
+    if is_shallow(repo):
+        raise RangeUnresolvable(
+            "the repository is shallow, so no commit range can be trusted: a "
+            "truncated history is indistinguishable from missing work. Check "
+            "out with fetch-depth: 0, or set RST_COMMIT_RANGE explicitly."
+        )
 
     for base in ("main", "origin/main"):
         if git("rev-parse", "--verify", "--quiet", base, repo=repo).returncode != 0:
@@ -91,12 +107,6 @@ def resolve_range(repo: Path = REPO_ROOT) -> RangeResolution:
         if log("%s", f"{base}..HEAD", repo=repo):
             return RangeResolution(f"{base}..HEAD", base)
 
-    if is_shallow(repo):
-        raise RangeUnresolvable(
-            "no branch range could be established and the repository is "
-            "shallow, so the full history is not available to fall back on. "
-            "Check out with fetch-depth: 0, or set RST_COMMIT_RANGE."
-        )
     if not log("%s", None, repo=repo):
         raise RangeUnresolvable("the repository has no commits")
     return RangeResolution(None, "full-history")

@@ -57,11 +57,27 @@ violated, or the evidence was unavailable.**
 
 RST-B4 resolves a commit range, falling back through `main..HEAD`,
 `origin/main..HEAD`, and finally the whole history. Review expected a vacuous
-pass there. There wasn't one — a repo with no matching commits, a shallow
-clone, `HEAD..HEAD`, a bogus range and a non-repository were all tried, and
-every one failed. The fallback failed closed.
+pass in the fallback. There wasn't one: a repo with no matching commits, a
+shallow clone with no branch range, `HEAD..HEAD`, a bogus range and a
+non-repository were all tried, and every one failed closed.
 
-**The defect was that it failed for the right reason and said the wrong one.**
+**That enumeration was also the mistake, and a later review caught it.** Every
+scenario listed above probes the FALLBACK path. The branch-range path was never
+probed, and that is where the hole was: the shallow guard sat *after* both
+branch-range attempts, so `git clone --no-single-branch --depth 2` — which
+leaves `origin/main` resolvable — produced `origin/main..HEAD`, returned the two
+commits it could see, and reported the three older ones as missing work. The
+commonest shallow shape there is, straight through the guard.
+
+Two lessons, and the second is the sharper one. Moving the check ahead of every
+derivation was the fix. But **"I tried five scenarios and all of them failed"
+is a claim about coverage, and five negative results say nothing about the path
+none of them touched.** Name the paths, not the attempts — this file asserted
+the fallback was exhaustively probed while a second, unprobed path carried the
+defect.
+
+**The original defect was that it failed for the right reason and said the
+wrong one.**
 A shallow checkout reported *"no commit mentions RST-B1"*, which is a false
 accusation: the work was there, the history was not. And that erodes trust as
 fast as a vacuous pass, because of what the next person does with it — either
@@ -70,12 +86,49 @@ as tooling artifacts and start waving them through. A gate nobody believes has
 stopped being a gate.
 
 So: **report the cause, fail either way.** Resolution now raises
-`RangeUnresolvable` for a non-repository, a shallow history with no branch
-range, or an override naming no commits, and each refusal carries its own test.
+`RangeUnresolvable` for a non-repository, any shallow repository (checked before
+a range is derived, not after), or an override naming no commits, and each
+refusal carries its own test — including the `--no-single-branch --depth 2`
+shape that got through the first time.
 The load-bearing one is the opposite direction — a *trustworthy* history that
 genuinely lacks the work must still report missing work — because without it
 the "evidence unavailable" branch would quietly swallow the very failure the
 gate exists to report.
+
+### Three of this session's own "structural fixes" were decoration or blind
+
+An automated review read the branch and returned six substantiated findings,
+every one reproduced by execution. They are worth recording as a set, because
+the pattern across them is sharper than any one of them:
+
+| what it was presented as | what it was |
+|---|---|
+| the structural fix closing the parser fail-open | an arithmetic identity that could not fail — deleting it turned nothing red |
+| "the entry must mention the new value" | a bare substring search that any dated heading satisfies |
+| the cap detector | disarmed entirely by writing `REGISTER_CAP: int = 21` |
+| the shallow-clone refusal | guarded only the fallback path; the commonest shallow shape walked past it |
+
+**Every one was written in the same session as a lesson warning against exactly
+that failure**, and shipped under a green suite and five green CI jobs. The
+tautological accounting check landed in the same batch as the paragraph saying
+a check that cannot fail is not a check. That is not carelessness about the
+doctrine — it is evidence that knowing the doctrine does not protect you, and
+that the only thing which actually catches this is an adversary who executes
+the code rather than reading it.
+
+The mechanical takeaways, each earned here:
+
+- **Mutate the fix, then mutate the shape an editor produces.** The cap
+  detector survived every mutation aimed at the value it read, and died to a
+  type annotation nobody thought to try.
+- **A regex over source text is a parser, and parsers have a third state.**
+  Present, absent, and *unreadable* — and collapsing unreadable into absent is
+  what disarmed the gate. The same distinction the range resolver needed, one
+  layer down, missed while writing the range resolver.
+- **A check that is a property of history needs a forward remedy.** The cap
+  gate would have gone permanently red on its first violation, with no exit
+  except a history rewrite in a repository whose rule is never to rewrite.
+  Naming the offending SHA in the decision log is the remedy.
 
 ### A check that only ever goes red is indistinguishable from a broken one
 

@@ -126,6 +126,49 @@ The check walks the commit range with the same resolver RST-B4 uses
 (`tests/support/git_range.py`), so it fails closed on a history it cannot
 trust rather than passing over one it cannot read.
 
+### B5-b — the cap reading has three states, not two
+
+`cap_at` returns `absent` / `unreadable` / `ok`. Collapsing `unreadable` into
+`absent` is what let `REGISTER_CAP: int = 21` switch the entire gate off:
+the pattern stopped matching, the caller read that as "no cap to compare", and
+the raise went through green.
+
+The states are read against the PARENT, which is what makes the distinction
+usable. A cap that was readable and stops being readable is the disarm case and
+is an offence; a cap that was never readable is a commit predating the constant
+and is skipped. Reading `unreadable` as an offence unconditionally flagged every
+commit written before the cap existed — measured, seven on this branch.
+
+Two mechanisms, and each has a test that fails when only it is removed: the
+broadened pattern (so an honest annotated assignment is still read) and the
+three-state handling (so a removed constant is still caught).
+
+### B5-c — a history-property check needs a forward remedy
+
+RST-B5 is a property of commits, and after the merge the full-history fallback
+re-finds an old violation on every run, forever. A later commit adding the
+decision entry does not clear it, because the check reads the offending
+commit's own diff. In a repository whose standing rule is `git revert`, never
+rewrite, that left only two exits: a permanently red suite, or a history
+rewrite.
+
+So the decision log clears it. Naming the offending SHA on a `REGISTER_CAP`
+line accounts for it retrospectively — late, logged, reviewable, and the
+original commit is untouched. Decided before the first violation rather than
+under one.
+
+### B4-b — the shallow check runs before any range is derived
+
+It used to sit after both branch-range attempts, so it guarded only the
+full-history fallback. `git clone --no-single-branch --depth 2` leaves
+`origin/main` resolvable, so `origin/main..HEAD` succeeded over a truncated
+history and reported older commits as missing work — the exact false accusation
+the refusal exists to prevent, reached by the commonest shallow shape there is.
+
+An explicit `RST_COMMIT_RANGE` still wins, shallow or not: that is deliberate
+operator intent, and refusing it would make the guard indistinguishable from a
+blanket refusal. That inverse case has its own test.
+
 ### Out of scope, deliberately
 
 - No adversarial case set, failure taxonomy or known-miss register. Assigned to

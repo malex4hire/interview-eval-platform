@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -229,22 +230,13 @@ def test_the_register_is_not_empty():
     )
 
 
-def test_every_row_present_in_the_register_is_parsed():
-    """The structural property: rows-parsed == rows-present.
-
-    Asserted on the real README, not on a fixture. A parser that skips a line
-    it cannot read keeps reporting green while checking fewer claims than the
-    register appears to hold — the same shape as a README table that five green
-    CI jobs never looked at. Header row + alignment row + one line per claim
-    must account for every non-blank line between the markers.
-    """
-    present = len(register_rows())
-    accounted = len(CLAIMS) + 2  # header, alignment
-    assert accounted == present, (
-        f"the register has {present} non-blank lines but {accounted} were "
-        f"accounted for; {present - accounted} row(s) are checked by nothing"
-    )
-
+# There used to be a test_every_row_present_in_the_register_is_parsed here,
+# asserting len(CLAIMS) + 2 == len(register_rows()). It was removed along with
+# the arithmetic check inside parse_claims that it mirrored: both recomputed the
+# same identity from the same parser, so neither could fail. Deleting the parser
+# block turned nothing red — the definition of decoration. The refusals below
+# are the real mechanism, and the parametrised cases that follow are what prove
+# it.
 
 @pytest.mark.parametrize(
     "label,row",
@@ -276,6 +268,38 @@ def test_no_unparseable_row_is_skipped(tmp_path, label, row):
         encoding="utf-8",
     )
     with pytest.raises(ClaimsRegisterError):
+        parse_claims(register)
+
+
+@pytest.mark.parametrize(
+    "label,extra",
+    [
+        ("duplicate alignment row", "|---|---|---|---|"),
+        ("duplicate header row", "| # | Claim | Implemented in | Proven by |"),
+    ],
+)
+def test_a_repeated_structure_row_is_refused(tmp_path, label, extra):
+    """Review finding 6, pinned.
+
+    The one-shot guards meant a SECOND header or alignment row fell through to
+    the claim branch and registered as a claim named '#' or '---'. Both are
+    ordinary copy-paste edits and both used to parse green. On the real README
+    the phantom row carries no gate, so the failure eventually surfaced — but
+    as "claim '---' names no gate" rather than as the register damage it is.
+    """
+    register = tmp_path / f"{label.replace(' ', '-')}.md"
+    register.write_text(
+        f"""{BEGIN}
+| # | Claim | Implemented in | Proven by |
+|---|---|---|---|
+| C1 | A well-formed claim | `demo.sh` | `tests/t.py::test_a` |
+{extra}
+| C2 | Another claim | `demo.sh` | `tests/t.py::test_b` |
+{END}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ClaimsRegisterError, match="second"):
         parse_claims(register)
 
 
@@ -378,18 +402,69 @@ def test_the_parser_rejects_a_damaged_register(tmp_path):
 # RST-B5 — the register is bounded
 # ---------------------------------------------------------------------------
 
-_CAP_PATTERN = re.compile(r"^REGISTER_CAP\s*=\s*(\d+)", re.MULTILINE)
+# Tolerates an annotated or spaced assignment. Broadening the pattern is the
+# convenience; CapUnreadable below is the actual protection.
+_CAP_PATTERN = re.compile(r"^REGISTER_CAP\s*(?::[^=\n]+)?=\s*(\d+)", re.MULTILINE)
 CAP_SOURCE = "scripts/readme_claims.py"
 DECISION_LOG = "docs/DECISIONS.md"
 
+# A decision entry must name the constant and the new value on one line, e.g.
+#   REGISTER_CAP raised to 21
+# A bare digit match is not enough: docs/DECISIONS.md carries dated headings,
+# so "## 2026-09-21 ..." would launder a raise to 21 all by itself.
+def _mentions_the_raise(added_lines: list[str], new_cap: int) -> bool:
+    return any(
+        "REGISTER_CAP" in line and str(new_cap) in line for line in added_lines
+    )
 
-def cap_at(revision: str, repo: Path = REPO_ROOT) -> int | None:
-    """The cap as of a revision, or None if it did not exist yet."""
+
+class CapReading(NamedTuple):
+    """What could be read at a revision, and whether reading succeeded.
+
+    Three states, kept apart because they mean different things:
+      absent      — the file does not exist at this revision
+      unreadable  — the file exists but carries no parseable REGISTER_CAP
+      ok          — a value was read
+
+    Collapsing `unreadable` into `absent` is what let an annotated assignment
+    disarm the whole check: `REGISTER_CAP: int = 21` stopped matching, the
+    caller read that as "nothing to compare", and the raise sailed through.
+    """
+
+    state: str  # "absent" | "unreadable" | "ok"
+    value: int | None
+
+
+def cap_at(revision: str, repo: Path = REPO_ROOT) -> CapReading:
     shown = git("show", f"{revision}:{CAP_SOURCE}", repo=repo)
     if shown.returncode != 0:
-        return None
+        return CapReading("absent", None)
     match = _CAP_PATTERN.search(shown.stdout)
-    return int(match.group(1)) if match else None
+    if match is None:
+        return CapReading("unreadable", None)
+    return CapReading("ok", int(match.group(1)))
+
+
+def _exempted_shas(repo: Path = REPO_ROOT) -> set[str]:
+    """SHAs the decision log retrospectively accounts for.
+
+    RST-B5's check is a property of history, and after the branch merges the
+    full-history fallback re-finds an old violation on every run forever. This
+    repository never rewrites history, so without a forward remedy the only
+    exits would be a permanently red suite or a rewrite. Naming the SHA in the
+    decision log is that remedy: late, logged, reviewable, and it leaves the
+    original commit untouched.
+    """
+    log_path = repo / DECISION_LOG
+    if not log_path.is_file():
+        return set()
+    text = log_path.read_text(encoding="utf-8")
+    return {
+        match.group(1)
+        for match in re.finditer(
+            r"REGISTER_CAP[^\n]*\b([0-9a-f]{7,40})\b", text
+        )
+    }
 
 
 def cap_raises_without_a_decision(
@@ -399,13 +474,36 @@ def cap_raises_without_a_decision(
 
     Introducing the cap is not a raise — there is nothing to raise from — so a
     commit whose parent has no cap is skipped. Lowering it is not a raise
-    either: tightening a bound needs no permission.
+    either: tightening a bound needs no permission. A commit that makes an
+    existing cap unreadable IS an offender: that is how the gate gets disarmed.
     """
     offenders: list[str] = []
+    exempted = _exempted_shas(repo=repo)
+
     for sha in commits(revision_range, repo=repo):
+        if any(sha.startswith(prefix) for prefix in exempted):
+            continue
+        # Four cases, and only one of them is an attack.
+        #
+        #   parent ok  -> child unreadable : the cap was removed or reformatted.
+        #                                    This is the disarm case. OFFENDER.
+        #   parent not ok -> child unreadable : the commit predates the cap. Skip.
+        #   parent not ok -> child ok      : the cap was introduced here. Skip.
+        #   both ok                        : compare the values.
+        #
+        # Reading "unreadable" as "no cap" in all four collapsed the first case
+        # into the second and disabled the gate; reading it as an offence in all
+        # four flagged every commit written before the cap existed.
         after = cap_at(sha, repo=repo)
         before = cap_at(f"{sha}^", repo=repo)
-        if after is None or before is None or after <= before:
+
+        if after.state == "unreadable":
+            if before.state == "ok":
+                offenders.append(sha)
+            continue
+        if after.state == "absent" or before.state != "ok":
+            continue
+        if after.value <= before.value:
             continue
 
         touched = git(
@@ -415,15 +513,12 @@ def cap_raises_without_a_decision(
             offenders.append(sha)
             continue
 
-        # "Corresponding" is load-bearing: touching the file is not the same as
-        # recording the decision, so the new value has to appear in what the
-        # commit ADDED to the log.
         diff = git("show", sha, "--", DECISION_LOG, repo=repo).stdout
         added = [
             line for line in diff.splitlines()
             if line.startswith("+") and not line.startswith("+++")
         ]
-        if not any(str(after) in line for line in added):
+        if not _mentions_the_raise(added, after.value):
             offenders.append(sha)
     return offenders
 
@@ -483,7 +578,9 @@ def _raise_cap(repo: Path, cap: int, *, log_decision: bool, subject: str) -> Non
     (repo / CAP_SOURCE).write_text(f"REGISTER_CAP = {cap}\n", encoding="utf-8")
     if log_decision:
         with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
-            handle.write(f"\n### Cap raised to {cap}\n\nBecause of a reason.\n")
+            handle.write(
+                f"\n### Cap raised\n\nREGISTER_CAP raised to {cap} because of a reason.\n"
+            )
     git("add", "-A", repo=repo)
     git("commit", "-q", "-m", subject, repo=repo)
 
@@ -522,6 +619,128 @@ def test_touching_the_decision_log_is_not_recording_a_decision(tmp_path):
     git("commit", "-q", "-m", "raise the cap, mention nothing", repo=repo)
 
     assert cap_raises_without_a_decision(None, repo=repo)
+
+
+def test_a_reformatted_assignment_cannot_disarm_the_detector(tmp_path):
+    """Review finding 1, pinned.
+
+    `REGISTER_CAP: int = 21` stopped matching the pattern, `cap_at` returned
+    "no cap", and the caller read that as "nothing to compare" — so an
+    annotated assignment silently switched the whole gate off while the suite
+    stayed green. Measured before the fix: offenders == [].
+    """
+    repo = _cap_repo(tmp_path / "annotated", 20)
+    (repo / CAP_SOURCE).write_text("REGISTER_CAP: int = 21\n", encoding="utf-8")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "annotate the constant, raise it, log nothing", repo=repo)
+
+    assert cap_raises_without_a_decision(None, repo=repo), (
+        "an annotated assignment disarmed the cap detector"
+    )
+
+
+def test_an_annotated_assignment_is_still_read_when_it_is_honest(tmp_path):
+    """The inverse row: broadening the pattern must not break a real raise.
+
+    Without this, refusing every annotated form would look identical to
+    reading it correctly.
+    """
+    repo = _cap_repo(tmp_path / "annotated-ok", 20)
+    (repo / CAP_SOURCE).write_text("REGISTER_CAP: int = 21\n", encoding="utf-8")
+    with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
+        handle.write("\n### Cap raised\n\nREGISTER_CAP raised to 21 for a reason.\n")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "RST-B5: raise to 21", repo=repo)
+
+    assert cap_at("HEAD", repo=repo).value == 21
+    assert not cap_raises_without_a_decision(None, repo=repo)
+
+
+def test_removing_the_cap_entirely_is_an_offence(tmp_path):
+    """Deleting the constant is the blunt version of reformatting it."""
+    repo = _cap_repo(tmp_path / "deleted", 20)
+    (repo / CAP_SOURCE).write_text("# the cap used to live here\n", encoding="utf-8")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "drop the cap", repo=repo)
+
+    assert cap_raises_without_a_decision(None, repo=repo)
+
+
+def test_commits_predating_the_cap_are_not_offenders(tmp_path):
+    """The other side of "unreadable".
+
+    Every commit written before the cap existed has the source file but no
+    constant in it. Treating that as an offence flagged the entire history —
+    measured, seven commits on this branch — so the state has to be read
+    against the PARENT, not in isolation.
+    """
+    repo = tmp_path / "predating"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "docs").mkdir(parents=True)
+    git("init", "-q", "-b", "work", str(repo), repo=repo.parent)
+    git("config", "user.name", "test", repo=repo)
+    git("config", "user.email", "test@example.invalid", repo=repo)
+    (repo / CAP_SOURCE).write_text("# no cap yet\n", encoding="utf-8")
+    (repo / DECISION_LOG).write_text("# Decisions\n", encoding="utf-8")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "work that predates the cap", repo=repo)
+    (repo / CAP_SOURCE).write_text("REGISTER_CAP = 20\n", encoding="utf-8")
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "RST-B5: introduce the cap", repo=repo)
+
+    assert not cap_raises_without_a_decision(None, repo=repo)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "\n## 2026-09-21 — something else entirely\n\nUnrelated.\n",
+        "\n### D-9 — chose sqlite (2026)\n\nUnrelated.\n",
+    ],
+)
+def test_a_dated_entry_does_not_launder_a_raise(tmp_path, entry):
+    """Review finding 2, pinned.
+
+    The check used to search the added lines for the digits of the new cap
+    anywhere. This log is written with dated headings, so ordinary entries
+    already contain those digits and satisfied it by accident — both of these
+    were measured passing. The entry must now name REGISTER_CAP and the value
+    on one line.
+    """
+    repo = _cap_repo(tmp_path / f"dated{abs(hash(entry)) % 1000}", 20)
+    (repo / CAP_SOURCE).write_text("REGISTER_CAP = 21\n", encoding="utf-8")
+    with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
+        handle.write(entry)
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "raise the cap under cover of a date", repo=repo)
+
+    assert cap_raises_without_a_decision(None, repo=repo)
+
+
+def test_a_logged_violation_can_be_cleared_forward(tmp_path):
+    """Review finding 5 — the gate needs a forward remedy.
+
+    The check is a property of history, and after the merge the full-history
+    fallback re-finds an old violation on every run forever. This repository
+    never rewrites history, so the only other exits would be a permanently red
+    suite or a rewrite. Naming the SHA in the decision log clears it: late,
+    logged, reviewable, and the original commit is untouched.
+    """
+    repo = _cap_repo(tmp_path / "cleared", 20)
+    _raise_cap(repo, 21, log_decision=False, subject="sneak one more claim in")
+
+    offenders = cap_raises_without_a_decision(None, repo=repo)
+    assert offenders, "fixture precondition: the raise must be unlogged"
+
+    with (repo / DECISION_LOG).open("a", encoding="utf-8") as handle:
+        handle.write(
+            f"\n### Retrospective\n\nREGISTER_CAP raised to 21 in {offenders[0]}, "
+            "accepted after the fact.\n"
+        )
+    git("add", "-A", repo=repo)
+    git("commit", "-q", "-m", "RST-B5: account for an earlier raise", repo=repo)
+
+    assert not cap_raises_without_a_decision(None, repo=repo)
 
 
 def test_lowering_the_cap_needs_no_decision(tmp_path):

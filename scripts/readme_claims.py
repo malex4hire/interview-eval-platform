@@ -104,10 +104,18 @@ def parse_claims(readme: Path = README) -> list[Claim]:
     That total-accounting property is the point, not a nicety. A parser that
     skips a line it cannot read goes on reporting green while checking one
     fewer claim than the register appears to contain — the same shape of
-    defect as a README table that five green CI jobs never looked at. Three
+    defect as a README table that five green CI jobs never looked at. Five
     such skips used to live here: a row that lost its leading pipe (which is
     still valid GitHub-flavoured markdown), a row whose identifier cell was
-    blank, and any stray prose someone left between the markers.
+    blank, stray prose someone left between the markers, and a repeated header
+    or alignment row, which fell through and registered as a claim named '#'
+    or '---'.
+
+    The mechanism is the refusals below and nothing else. An arithmetic
+    cross-check (claims + 2 == lines) used to sit at the end of this function
+    and was removed: every path above either raises or accounts for its line,
+    so the sum held by construction and the check could not fail. Deleting it
+    turned nothing red, which is the definition of decoration.
     """
     claims: list[Claim] = []
     header_seen = False
@@ -133,11 +141,26 @@ def parse_claims(readme: Path = README) -> list[Claim]:
                 "considered."
             )
 
-        if not header_seen and cells[0].casefold() in {"#", "id"}:
+        looks_like_header = cells[0].casefold() in {"#", "id"}
+        looks_like_alignment = all(cell and set(cell) <= set("-:") for cell in cells)
+
+        if looks_like_header:
+            if header_seen:
+                raise ClaimsRegisterError(
+                    f"line {number}: a second header row: {line!r}. Repeated "
+                    "structure rows used to fall through and be registered as "
+                    "claims named '#' or '---'."
+                )
             header_seen = True
             continue
 
-        if not alignment_seen and all(cell and set(cell) <= set("-:") for cell in cells):
+        if looks_like_alignment:
+            if alignment_seen:
+                raise ClaimsRegisterError(
+                    f"line {number}: a second alignment row: {line!r}. Repeated "
+                    "structure rows used to fall through and be registered as "
+                    "claims named '#' or '---'."
+                )
             alignment_seen = True
             continue
 
@@ -163,17 +186,6 @@ def parse_claims(readme: Path = README) -> list[Claim]:
         raise ClaimsRegisterError("claims register has no alignment row")
     if not claims:
         raise ClaimsRegisterError("claims register contains no rows")
-
-    # The structural invariant, asserted rather than assumed: header +
-    # alignment + one line per claim accounts for every line present.
-    accounted = len(claims) + 2
-    present = len(register_rows(readme))
-    if accounted != present:
-        raise ClaimsRegisterError(
-            f"claims register has {present} non-blank lines but only "
-            f"{accounted} were accounted for; {present - accounted} row(s) "
-            "would have been checked by nothing"
-        )
 
     return claims
 
