@@ -131,6 +131,50 @@ def _init_repo(path: Path, *subjects_to_commit: str) -> Path:
     return path
 
 
+def test_a_later_branch_that_lands_no_rst_work_still_passes(tmp_path, monkeypatch):
+    """The regression that blocked the first pull request after this merged.
+
+    Resolution used to prefer `main..HEAD`, so a branch was required to name
+    every RST identifier itself. The first follow-up — a docs-only change —
+    failed with "no commit mentions RST-B2 in origin/main..HEAD", and so would
+    every future branch, because no later branch re-lands the original work.
+    The requirement is historical: the identifiers must be IN the history, not
+    in whatever range happens to be checked out.
+    """
+    monkeypatch.delenv("RST_COMMIT_RANGE", raising=False)
+    repo = _init_repo(
+        tmp_path / "later-branch",
+        "RST-B1: a", "RST-B2: b", "RST-B3: c", "RST-B4: d", "RST-B5: e",
+    )
+    # main exists and points at the landed work; the branch adds only docs.
+    git("branch", "-f", "main", "HEAD", repo=repo)
+    git("checkout", "-q", "-b", "docs/unrelated", repo=repo)
+    git("commit", "-q", "--allow-empty", "-m", "docs: unrelated follow-up", repo=repo)
+
+    resolved = resolve_range(repo)
+    assert resolved.source == "full-history"
+
+    messages = log("%s%n%b", resolved.revision_range, repo=repo)
+    for identifier in RST_IDENTIFIERS:
+        assert [line for line in messages if identifier in line], (
+            f"{identifier} is in the history but the resolved range cannot see it"
+        )
+
+
+def test_rewriting_the_identifiers_out_of_history_is_still_caught(tmp_path, monkeypatch):
+    """The inverse row, so full-history is not just a way of always passing.
+
+    If the history genuinely does not carry the work, the gate must still fail.
+    """
+    monkeypatch.delenv("RST_COMMIT_RANGE", raising=False)
+    repo = _init_repo(tmp_path / "rewritten", "chore: squashed everything")
+
+    resolved = resolve_range(repo)
+    messages = log("%s%n%b", resolved.revision_range, repo=repo)
+    missing = [i for i in RST_IDENTIFIERS if not [l for l in messages if i in l]]
+    assert missing == list(RST_IDENTIFIERS)
+
+
 def test_resolution_refuses_when_the_directory_is_not_a_repository(tmp_path):
     """Fail closed, loudly, rather than measure nothing."""
     with pytest.raises(RangeUnresolvable, match="not a git repository"):
