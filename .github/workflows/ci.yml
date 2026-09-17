@@ -49,3 +49,28 @@ jobs:
         env:
           IEP_DEMO_BARE: "1"
         run: pytest tests/test_one_command_bringup.py -q
+
+  # RST-B3. The README registers every capability claim against a gate. The
+  # test suite proves those gates RESOLVE; this job proves they PASS, by running
+  # exactly the node ids the register names and nothing else. Both halves are
+  # needed: a gate can stop existing without going red, and a gate can go red
+  # without anyone rereading the README.
+  claims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Extract the gates the README names
+        run: |
+          python -m scripts.readme_claims | tee claim-gates.txt
+          # An empty list would make the next step run the whole suite and pass
+          # for the wrong reason. The parser raises on a damaged register; this
+          # is the belt to that pair of braces.
+          test -s claim-gates.txt
+      - name: Every gate the README names must pass
+        run: xargs -a claim-gates.txt pytest -q
