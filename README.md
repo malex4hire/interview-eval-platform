@@ -128,10 +128,8 @@ next. Adding the row is part of writing the sentence.
 **Where these gates stop.** Adversarial review of the gates themselves found
 several that can be defeated — an allowlist that disarms a comparison when
 widened, a CI-wiring check satisfied by a comment, a no-prompt check that does
-not look for prompts. They are written down, with the mutation that
-demonstrates each one, in
-[`docs/KNOWN-LIMITATIONS.md`](docs/KNOWN-LIMITATIONS.md). Fixing a gate that
-guards a gate is an unbounded regress; saying where the floor is, is not.
+not look for prompts. Fixing a gate that guards a gate is an unbounded regress;
+saying where the floor is, is not.
 
 ## Confidence threshold
 
