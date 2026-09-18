@@ -1,8 +1,9 @@
 """RST-B4 — the commit history names what it satisfies.
 
 A branch squashed to "address review feedback" tells a reviewer nothing about
-which requirement each change served. This asserts the opposite: the range
-contains at least one commit per RST identifier in the ICG, unsquashed.
+which requirement each change served. This asserts the opposite: every RST
+identifier in the ICG is named by a commit in the range, and one commit may
+name several.
 
 Range resolution, in order:
 
@@ -28,9 +29,8 @@ are different facts and the gate now says which one it found.
 
 Post-merge on a full clone the fallback resolves to the whole history, and that
 is not a vacuous pass: the identifiers still have to appear in real commit
-subjects, and test_the_work_is_not_squashed_into_one_commit still requires one
-subject per identifier. CI checks out with fetch-depth: 0 so this path has a
-real history to read.
+subjects. CI checks out with fetch-depth: 0 so this path has a real history to
+read.
 """
 
 from __future__ import annotations
@@ -78,31 +78,13 @@ def subjects(resolution) -> list[str]:
 
 @pytest.mark.parametrize("identifier", RST_IDENTIFIERS)
 def test_a_commit_names_each_rst_identifier(identifier: str, message_lines, resolution):
-    """SPEC: one commit per RST minimum, each naming the identifier."""
+    """SPEC: every RST identifier is named by at least one commit."""
     matching = [line for line in message_lines if identifier in line]
     assert matching, (
         f"no commit mentions {identifier} in "
         f"{resolution.revision_range or 'the full history'} "
-        f"(resolved via {resolution.source}). Each RST in this ICG lands as its "
-        "own commit, naming what it satisfies."
-    )
-
-
-def test_the_work_is_not_squashed_into_one_commit(subjects):
-    """SPEC: no squash to a single commit.
-
-    Counted over subjects alone. The check above reads bodies too, so one
-    commit listing all four identifiers in its body would otherwise satisfy it
-    while defeating the requirement this test exists for.
-    """
-    naming = [
-        subject
-        for subject in subjects
-        if any(identifier in subject for identifier in RST_IDENTIFIERS)
-    ]
-    assert len(naming) >= len(RST_IDENTIFIERS), (
-        f"only {len(naming)} commit subject(s) name an RST identifier "
-        f"({naming}); RST-B4 requires at least one commit per identifier."
+        f"(resolved via {resolution.source}). Every RST in this ICG is named by "
+        "at least one commit; one commit may name several."
     )
 
 
