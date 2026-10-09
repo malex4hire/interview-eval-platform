@@ -1,5 +1,7 @@
 # Interview Response Evaluation Platform
 
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white) ![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00?logo=sqlalchemy&logoColor=white) ![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
+
 [![tests](https://github.com/malex4hire/interview-eval-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/malex4hire/interview-eval-platform/actions/workflows/ci.yml)
 
 Backend + API for automated technical interviews. Candidates answer questions
